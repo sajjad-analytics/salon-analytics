@@ -115,6 +115,25 @@ textarea.inp{height:auto;min-height:90px;padding:10px 12px;font-size:13px;direct
 .toast{position:fixed;bottom:calc(84px + env(safe-area-inset-bottom,0px));inset-inline:16px;margin:0 auto;max-width:400px;background:var(--ink);color:var(--paper);border-radius:12px;padding:10px 14px;text-align:center;z-index:30;font-size:15px}
 .warnbar{background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:8px 10px;font-size:13px;margin-top:10px}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--line);padding:4px;border-radius:12px;margin-top:10px}
+.tab{border:none;background:transparent;border-radius:9px;height:38px;font-weight:700;font-size:15px;color:var(--muted)}
+.tab.on{background:var(--surface);color:var(--pen);box-shadow:0 1px 3px rgba(38,25,42,.12)}
+.dayrow{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.dayrow.today{border-color:color-mix(in srgb,var(--pen) 45%,var(--line))}
+.dayhead{display:flex;justify-content:space-between;align-items:center;gap:8px;border:none;background:none;padding:0;text-align:right;width:100%}
+.dayhead .dn{font-weight:800;font-size:16px}
+.dayhead .dn small{font-weight:500;color:var(--pen);font-size:12px;margin-inline-start:6px}
+.dayhead .cnt{font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.slotlist{display:flex;flex-direction:column;gap:4px}
+.slot{display:flex;gap:8px;align-items:baseline;border:none;background:var(--paper);border-radius:8px;padding:6px 8px;text-align:right;width:100%;font-size:14px;min-width:0}
+.slot .st{font-weight:800;font-variant-numeric:tabular-nums;flex:none}
+.slot .sv{color:var(--pen);font-weight:700;flex:none}
+.slot .sn{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.slot.done .st{color:var(--ok)}
+.frees{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;color:var(--gap)}
+.freechip{border:1.5px dashed var(--line);background:transparent;border-radius:8px;padding:3px 8px;font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
+.freechip:hover,.freechip:focus-visible{border-color:var(--pen);color:var(--pen)}
+.full{font-size:13px;color:var(--bad);font-weight:700}
 .menu-btns{display:flex;flex-direction:column;gap:8px}
 details summary{cursor:pointer;color:var(--muted);font-size:13px}
 .filebtn{position:relative;overflow:hidden;display:grid;place-items:center}
@@ -129,6 +148,10 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
       <div class="day"><div class="wd" id="wd"></div><div class="dt" id="dt"></div></div>
       <button class="iconbtn" id="nextDay" aria-label="روز بعد"><span dir="ltr">←</span></button>
       <button class="iconbtn" id="menuBtn" aria-label="پشتیبان و تنظیمات">☰</button>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab" id="tabDay" role="tab">برنامه‌ی روز</button>
+      <button class="tab" id="tabWeek" role="tab">۷ روز پیش رو</button>
     </div>
     <div class="row2">
       <button class="chip" id="todayBtn">امروز</button>
@@ -204,6 +227,8 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(S));storageOk=true}c
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 
 let view=todayIso();
+let mode='day';try{mode=localStorage.getItem(KEY+'-mode')==='week'?'week':'day'}catch(_){}
+function setMode(m){mode=m;try{localStorage.setItem(KEY+'-mode',m)}catch(_){}if(m==='week')view=todayIso();render();window.scrollTo(0,0)}
 const svc=id=>S.settings.services.find(s=>s.id===id);
 const svcLabel=id=>(svc(id)||{label:id}).label;
 const dur=b=>Math.max(15,(b.services||[]).reduce((a,id)=>a+((svc(id)||{}).min||30),0)||30);
@@ -216,7 +241,40 @@ function history(cust,exceptId){
 
 /* ---------- render ---------- */
 const $=id=>document.getElementById(id);
+function dayBookings(iso){return S.bookings.filter(b=>b.date===iso).sort((a,b)=>toMin(a.time)-toMin(b.time)||a.created-b.created)}
+function gapsFor(iso){
+  const start=toMin(S.settings.dayStart), end=toMin(S.settings.dayEnd);let cursor=start;const out=[];
+  dayBookings(iso).filter(active).forEach(b=>{const s=toMin(b.time);if(s-cursor>=30)out.push([cursor,s]);cursor=Math.max(cursor,s+dur(b))});
+  if(end-cursor>=30)out.push([cursor,end]);return out;
+}
+function renderWeek(){
+  const t0=todayIso(), days=[...Array(7)].map((_,i)=>addDays(view,i));
+  const a=faDay(days[0]), z=faDay(days[6]);
+  $('wd').textContent=view===t0?'از امروز تا ۷ روز بعد':'۷ روز';
+  $('dt').textContent=a.short+' تا '+z.short;
+  $('todayBtn').classList.toggle('on',view===t0);
+  let nB=0,nFree=0;
+  const html=days.map(iso=>{
+    const all=dayBookings(iso), act=all.filter(active), gaps=gapsFor(iso);
+    nB+=act.length; if(gaps.length)nFree++;
+    const d=faDay(iso), lost=all.length-act.length;
+    const tag=iso===t0?'امروز':iso===addDays(t0,1)?'فردا':'';
+    const slots=act.map(b=>{const c=S.customers[b.customer]||{};const nm=b.name||c.name||(b.customer?(b.customer.startsWith('@')?b.customer:fa(b.customer)):'');
+      return `<button class="slot${b.status==='done'?' done':''}" data-id="${b.id}"><span class="st">${faTime(b.time)}</span><span class="sv">${esc((b.services||[]).map(svcLabel).join('+'))}</span><span class="sn">${esc(nm)}</span></button>`}).join('');
+    const frees=gaps.length?`<span>خالی:</span>`+gaps.map(([x,y])=>`<button class="freechip" data-gap="${fromMin(x)}" data-date="${iso}">${faTime(fromMin(x))} تا ${faTime(fromMin(y))}</button>`).join(''):'<span class="full">پر است</span>';
+    return `<section class="dayrow${iso===t0?' today':''}">
+      <button class="dayhead" data-day="${iso}"><span class="dn">${d.wd} ${d.short}${tag?`<small>${tag}</small>`:''}</span><span class="cnt">${act.length?fa(act.length)+' نوبت':'بدون نوبت'}${lost?' · '+fa(lost)+' لغو':''} ‹</span></button>
+      ${slots?`<div class="slotlist">${slots}</div>`:''}
+      <div class="frees">${frees}</div></section>`;
+  }).join('');
+  $('summary').innerHTML=`<span>نوبت‌های این ۷ روز <b>${fa(nB)}</b></span><span>روزهای دارای جای خالی <b>${fa(nFree)}</b></span>`;
+  $('list').innerHTML=html;
+}
 function render(){
+  $('tabDay').classList.toggle('on',mode==='day');$('tabWeek').classList.toggle('on',mode==='week');
+  $('prevDay').setAttribute('aria-label',mode==='week'?'۷ روز قبل':'روز قبل');$('nextDay').setAttribute('aria-label',mode==='week'?'۷ روز بعد':'روز بعد');
+  renderBackupWarn();
+  if(mode==='week'){renderWeek();return}
   const d=faDay(view);
   $('wd').textContent=d.wd+(view===todayIso()?' · امروز':view===addDays(todayIso(),1)?' · فردا':'');
   $('dt').textContent=d.dt;
@@ -227,13 +285,17 @@ function render(){
   $('summary').innerHTML=
     `<span>رزرو <b>${fa(booked.length)}</b></span><span>انجام <b>${fa(done.length)}</b></span><span>لغو/نیامد <b>${fa(lost.length)}</b></span>`+
     `<span class="total">درآمد <b>${money(total)}</b>${noAmt?` <span class="clash">(${fa(noAmt)} بدون مبلغ)</span>`:''}</span>`;
-  // backup reminder
+  renderDayList();
+}
+function renderBackupWarn(){
   const n=S.bookings.length, days=S.lastBackup?Math.floor((Date.now()-S.lastBackup)/864e5):null;
   const w=$('backupWarn');
   if(!storageOk){w.hidden=false;w.textContent='ذخیره‌سازی در این مرورگر کار نمی‌کند؛ داده‌ها با بستن صفحه پاک می‌شوند.'}
   else if(n>=3&&(days===null||days>=3)){w.hidden=false;w.textContent=(days===null?'هنوز پشتیبان گرفته نشده.':`آخرین پشتیبان ${fa(days)} روز پیش.`)+' از منوی ☰ «ارسال فایل پشتیبان» را بزن.'}
   else w.hidden=true;
-
+}
+function renderDayList(){
+  const day=dayBookings(view);
   const list=$('list');let html='';
   const start=toMin(S.settings.dayStart), end=toMin(S.settings.dayEnd);
   const act=day.filter(active);
@@ -356,7 +418,7 @@ function openForm(opts){
       if(cust){S.customers[cust]=Object.assign(S.customers[cust]||{},rec.name?{name:rec.name}:{} ,{seen:Date.now()})}
       if(b){Object.assign(b,rec,{updated:Date.now()})}
       else S.bookings.push(Object.assign({id:uid(),status:'booked',amount:null,created:Date.now()},rec));
-      save();view=rec.date;closeSheet();render();toast(b?'تغییرات ذخیره شد':'نوبت ثبت شد');
+      save();if(mode==='day')view=rec.date;closeSheet();render();toast(b?'تغییرات ذخیره شد':'نوبت ثبت شد');
     });
   });
 }
@@ -499,18 +561,22 @@ function makeSamples(){
 
 /* ---------- toast + wiring ---------- */
 let tt;function toast(m){const el=$('toast');el.textContent=m;el.hidden=false;clearTimeout(tt);tt=setTimeout(()=>el.hidden=true,2200)}
-$('prevDay').addEventListener('click',()=>{view=addDays(view,-1);render()});
-$('nextDay').addEventListener('click',()=>{view=addDays(view,1);render()});
+const step=()=>mode==='week'?7:1;
+$('prevDay').addEventListener('click',()=>{view=addDays(view,-step());render()});
+$('nextDay').addEventListener('click',()=>{view=addDays(view,step());render()});
+$('tabDay').addEventListener('click',()=>{if(mode!=='day'){mode='day';try{localStorage.setItem(KEY+'-mode','day')}catch(_){}render()}});
+$('tabWeek').addEventListener('click',()=>{if(mode!=='week')setMode('week')});
 $('todayBtn').addEventListener('click',()=>{view=todayIso();render()});
 $('menuBtn').addEventListener('click',openMenu);
-$('addBtn').addEventListener('click',()=>openForm({date:view}));
+$('addBtn').addEventListener('click',()=>openForm({date:mode==='week'?todayIso():view}));
 $('list').addEventListener('click',e=>{
-  const g=e.target.closest('[data-gap]');if(g){openForm({date:view,time:g.dataset.gap});return}
+  const g=e.target.closest('[data-gap]');if(g){openForm({date:g.dataset.date||view,time:g.dataset.gap});return}
+  const dh=e.target.closest('[data-day]');if(dh){view=dh.dataset.day;mode='day';try{localStorage.setItem(KEY+'-mode','day')}catch(_){}render();window.scrollTo(0,0);return}
   const it=e.target.closest('[data-id]');if(it)openActions(it.dataset.id);
 });
 // swipe between days
 let sx=null,sy=null;document.addEventListener('touchstart',e=>{if(!$('sheetRoot').innerHTML){sx=e.touches[0].clientX;sy=e.touches[0].clientY}},{passive:true});
-document.addEventListener('touchend',e=>{if(sx===null)return;const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;sx=null;if(Math.abs(dx)>90&&Math.abs(dy)<50){view=addDays(view,dx>0?1:-1);render()}},{passive:true});
+document.addEventListener('touchend',e=>{if(sx===null)return;const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;sx=null;if(Math.abs(dx)>90&&Math.abs(dy)<50){view=addDays(view,(dx>0?1:-1)*step());render()}},{passive:true});
 // F. a new day starts while the app stays open
 let renderedToday=todayIso();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')return;const t=todayIso();if(t!==renderedToday){if(view===renderedToday)view=t;renderedToday=t}render()});
@@ -518,7 +584,12 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState!==
 let installEvt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;$('installBar').hidden=false});
 $('installBtn').addEventListener('click',async()=>{if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(_){}installEvt=null;$('installBar').hidden=true});
-if('serviceWorker' in navigator&&location.protocol!=='file:'){navigator.serviceWorker.register('sw.js').catch(()=>{})}
+if('serviceWorker' in navigator&&location.protocol!=='file:'){
+  const hadCtl=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(r=>r.update()).catch(()=>{});
+  // a new version took over: reload once, but never while a form is open
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadCtl)return;const go=()=>{if($('sheetRoot').innerHTML){setTimeout(go,3000);return}location.reload()};go()});
+}
 window.__daftar={normCustomer,shamsi,faDay,csv,state:()=>S,dur};
 render();
 })();
