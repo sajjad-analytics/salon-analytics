@@ -198,7 +198,7 @@ const DEF_SETTINGS={services:[
   {id:'ped',label:'پدیکور',min:60,price:0},
   {id:'tar',label:'ترمیم',min:30,price:0},
   {id:'pla',label:'پلاژن',min:90,price:0}],
-  dayStart:'09:00',dayEnd:'21:00',sharePct:65};
+  dayStart:'07:00',dayEnd:'21:00',sharePct:65};
 
 /* ---------- helpers ---------- */
 const fa=s=>String(s).replace(/\d/g,d=>FA[d]);
@@ -251,6 +251,8 @@ let storageOk=true;
 let S={v:1,bookings:[],customers:{},settings:JSON.parse(JSON.stringify(DEF_SETTINGS)),lastBackup:null};
 try{const raw=localStorage.getItem(KEY);if(raw){let o;try{o=JSON.parse(raw)}catch(pe){localStorage.setItem(KEY+'-corrupt-'+Date.now(),raw);throw pe}S=Object.assign(S,o);S.settings=Object.assign(JSON.parse(JSON.stringify(DEF_SETTINGS)),o.settings||{});}}catch(e){storageOk=false}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));storageOk=true}catch(e){storageOk=false;toast('ذخیره نشد: حافظه‌ی مرورگر در دسترس نیست')}}
+// migration: working hours now start at 07:00 (only if still on the old 09:00 default)
+if(!S.settings.hoursV){if(S.settings.dayStart==='09:00')S.settings.dayStart='07:00';S.settings.hoursV=2;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(_){}}
 // migration: lock the share % on bookings that already have an amount
 S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=curPct()});
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
@@ -549,6 +551,8 @@ function restoreFrom(text,btn,state){
   if(!state.armed||state.text!==text){state.armed=true;state.text=text;btn.textContent=`${fa(o.bookings.length)} نوبت جایگزین داده‌های فعلی می‌شود؛ برای تأیید دوباره بزن`;return}
   try{localStorage.setItem(KEY+'-before-restore',JSON.stringify(S))}catch(_){}
   S=Object.assign({v:1,customers:{},lastBackup:null},o);S.settings=Object.assign(JSON.parse(JSON.stringify(DEF_SETTINGS)),o.settings||{});
+  if(!(o.settings||{}).hoursV&&S.settings.dayStart==='09:00')S.settings.dayStart='07:00';
+  S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=curPct()});
   save();closeSheet();render();toast('پشتیبان برگردانده شد');
 }
 async function copyText(txt,ta,label){
@@ -603,7 +607,7 @@ function openMenu(){
     $('mDoRestoreFile').addEventListener('click',e=>restoreFrom(fileText,e.target,rs));
     $('mDoRestore').addEventListener('click',e=>restoreFrom($('mRestore').value,e.target,rs));
     $('mAddSvc').addEventListener('click',()=>{collectSvcs();S.settings.services.push({id:'s'+uid(),label:'خدمت جدید',min:30,price:0});save();openMenu()});
-    $('mSaveSet').addEventListener('click',()=>{collectSvcs();{const st=$('mStart').value||'09:00',en=$('mEnd').value||'21:00';if(toMin(en)<=toMin(st)){toast('ساعت پایان کار باید بعد از شروع باشد');return}S.settings.dayStart=st;S.settings.dayEnd=en}{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
+    $('mSaveSet').addEventListener('click',()=>{collectSvcs();{const st=$('mStart').value||'07:00',en=$('mEnd').value||'21:00';if(toMin(en)<=toMin(st)){toast('ساعت پایان کار باید بعد از شروع باشد');return}S.settings.dayStart=st;S.settings.dayEnd=en}{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
     $('mSample')&&$('mSample').addEventListener('click',()=>{makeSamples();save();closeSheet();view=todayIso();render();toast('نوبت‌های نمونه ساخته شد')});
     $('mClearSample')&&$('mClearSample').addEventListener('click',()=>{S.bookings=S.bookings.filter(b=>!b.sample);Object.keys(S.customers).forEach(k=>{if(S.customers[k].sample)delete S.customers[k]});save();closeSheet();render();toast('نمونه‌ها پاک شد')});
   });
