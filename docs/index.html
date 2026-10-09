@@ -134,6 +134,26 @@ textarea.inp{height:auto;min-height:90px;padding:10px 12px;font-size:13px;direct
 .freechip{border:1.5px dashed var(--line);background:transparent;border-radius:8px;padding:3px 8px;font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
 .freechip:hover,.freechip:focus-visible{border-color:var(--pen);color:var(--pen)}
 .full{font-size:13px;color:var(--bad);font-weight:700}
+.cal{display:flex;flex-direction:column;gap:4px}
+.calnav{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.calnav b{font-size:15px}
+.calnav button{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:0 12px;font-size:14px}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.calgrid .wdh{text-align:center;font-size:12px;color:var(--muted);font-weight:700}
+.cday{border:1px solid var(--line);background:var(--surface);border-radius:10px;min-height:50px;padding:4px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;font-variant-numeric:tabular-nums;min-width:0}
+.cday .n{font-size:17px;font-weight:800;line-height:1.2}
+.cday .c{font-size:10px;color:var(--muted);line-height:1.2;min-height:12px}
+.cday.past{opacity:.45}
+.cday.today{border-color:var(--pen)}
+.cday.on{background:var(--pen);border-color:var(--pen);color:var(--on-pen)}
+.cday.on .c{color:var(--on-pen)}
+.money{font-size:13px;color:var(--ink);display:flex;flex-wrap:wrap;gap:4px 12px;font-variant-numeric:tabular-nums}
+.money b{color:var(--ok)}
+.dayend{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:6px;font-variant-numeric:tabular-nums}
+.dayend h3{margin:0;font-size:15px}
+.dayend .r{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+.dayend .r.big{font-size:17px;font-weight:800}
+.dayend .r.big span:last-child{color:var(--ok)}
 .menu-btns{display:flex;flex-direction:column;gap:8px}
 details summary{cursor:pointer;color:var(--muted);font-size:13px}
 .filebtn{position:relative;overflow:hidden;display:grid;place-items:center}
@@ -178,7 +198,7 @@ const DEF_SETTINGS={services:[
   {id:'ped',label:'پدیکور',min:60,price:0},
   {id:'tar',label:'ترمیم',min:30,price:0},
   {id:'pla',label:'پلاژن',min:90,price:0}],
-  dayStart:'09:00',dayEnd:'21:00'};
+  dayStart:'09:00',dayEnd:'21:00',sharePct:65};
 
 /* ---------- helpers ---------- */
 const fa=s=>String(s).replace(/\d/g,d=>FA[d]);
@@ -216,6 +236,11 @@ function normCustomer(s){
   else if(d.length===10&&d.startsWith('9')) d='0'+d;
   return d;
 }
+const num=v=>Number(latin(v).replace(/\D/g,''))||0;
+const myShare=n=>Math.round((n||0)*(Number(S.settings.sharePct)||65)/100);
+const pct=()=>fa(Number(S.settings.sharePct)||65)+'٪';
+function satOf(iso){const d=dateOf(iso);return addDays(iso,-((d.getDay()+1)%7))}
+function faPart(iso,opt){try{return new Intl.DateTimeFormat('fa-IR-u-ca-persian',opt).format(dateOf(iso))}catch(e){return ''}}
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -242,9 +267,9 @@ function history(cust,exceptId){
 /* ---------- render ---------- */
 const $=id=>document.getElementById(id);
 function dayBookings(iso){return S.bookings.filter(b=>b.date===iso).sort((a,b)=>toMin(a.time)-toMin(b.time)||a.created-b.created)}
-function gapsFor(iso){
+function gapsFor(iso,exceptId){
   const start=toMin(S.settings.dayStart), end=toMin(S.settings.dayEnd);let cursor=start;const out=[];
-  dayBookings(iso).filter(active).forEach(b=>{const s=toMin(b.time);if(s-cursor>=30)out.push([cursor,s]);cursor=Math.max(cursor,s+dur(b))});
+  dayBookings(iso).filter(b=>active(b)&&b.id!==exceptId).forEach(b=>{const s=toMin(b.time);if(s-cursor>=30)out.push([cursor,s]);cursor=Math.max(cursor,s+dur(b))});
   if(end-cursor>=30)out.push([cursor,end]);return out;
 }
 function renderWeek(){
@@ -284,7 +309,7 @@ function render(){
   const total=done.reduce((a,b)=>a+(b.amount||0),0), noAmt=done.filter(b=>!b.amount).length;
   $('summary').innerHTML=
     `<span>رزرو <b>${fa(booked.length)}</b></span><span>انجام <b>${fa(done.length)}</b></span><span>لغو/نیامد <b>${fa(lost.length)}</b></span>`+
-    `<span class="total">درآمد <b>${money(total)}</b>${noAmt?` <span class="clash">(${fa(noAmt)} بدون مبلغ)</span>`:''}</span>`;
+    `<span class="total">سهم من <b>${money(myShare(total))}</b>${noAmt?` <span class="clash">(${fa(noAmt)} بدون مبلغ)</span>`:''}</span>`;
   renderDayList();
 }
 function renderBackupWarn(){
@@ -314,7 +339,20 @@ function renderDayList(){
     html+=itemHtml(b,clash);
   });
   if(!day.length) html+=`<p class="empty-note">برای این روز نوبتی ثبت نشده. روی بازه‌ی خالی یا «نوبت جدید» بزن.</p>`;
+  else{
+    const done=day.filter(b=>b.status==='done'), pend=day.filter(b=>b.status==='booked');
+    const tot=done.reduce((a,b)=>a+(b.amount||0),0), noAmt=done.filter(b=>!b.amount).length, mine=done.reduce((a,b)=>a+myShare(b.amount),0);
+    html+=`<section class="dayend"><h3>جمع روز</h3>
+      <div class="r"><span>خدمت انجام‌شده</span><span>${fa(done.length)}</span></div>
+      <div class="r"><span>جمع فاکتورها</span><span>${money(tot)} تومان</span></div>
+      <div class="r big"><span>سهم من (${pct()})</span><span>${money(mine)} تومان</span></div>
+      <div class="r small"><span>سهم سالن</span><span>${money(tot-mine)} تومان</span></div>
+      ${noAmt?`<div class="clash">${fa(noAmt)} خدمت انجام‌شده مبلغ ندارد و در جمع حساب نشده.</div>`:''}
+      ${pend.length&&view<=todayIso()?`<div class="small">${fa(pend.length)} نوبت هنوز «رزرو» است و در جمع نیامده.</div><button class="btn ok" id="allDone">همه را «انجام شد» ثبت کن</button>`:''}
+    </section>`;
+  }
   list.innerHTML=html;
+  const ad=$('allDone');if(ad)ad.addEventListener('click',e=>{e.stopPropagation();day.filter(b=>b.status==='booked').forEach(b=>{b.status='done';b.updated=Date.now()});save();render();toast('همه ثبت شد')});
 }
 function gapHtml(a,b){
   return `<button class="gapitem" data-gap="${fromMin(a)}"><span>خالی · <b>${faTime(fromMin(a))}</b> تا <b>${faTime(fromMin(b))}</b> · ${fa(b-a)} دقیقه</span><span class="plus">+ ثبت</span></button>`;
@@ -330,7 +368,7 @@ function itemHtml(b,clash){
     <div class="body">
       <div class="line1">${(b.services||[]).map(id=>`<span class="svc">${esc(svcLabel(id))}</span>`).join('')}<span class="pill">${STATUS[b.status]}</span>${b.sample?'<span class="sampletag">نمونه</span>':''}</div>
       <div class="who">${name?esc(name)+' ':''}${custTxt}</div>
-      <div class="meta">${h.length?`<span>${fa(h.length)} مراجعه‌ی قبلی</span>`:(b.customer?'<span class="new">مشتری جدید</span>':'')}${src&&b.source!=='direct'?`<span>از: ${src[1]}${b.ref?' ('+esc(b.ref)+')':''}</span>`:''}${b.status==='done'&&b.amount?`<span>${money(b.amount)} تومان</span>`:''}${clash?'<span class="clash">تداخل زمانی</span>':''}${b.note?`<span>${esc(b.note)}</span>`:''}</div>
+      <div class="meta">${h.length?`<span>${fa(h.length)} مراجعه‌ی قبلی</span>`:(b.customer?'<span class="new">مشتری جدید</span>':'')}${src&&b.source!=='direct'?`<span>از: ${src[1]}${b.ref?' ('+esc(b.ref)+')':''}</span>`:''}${b.amount&&active(b)?`<span>فاکتور ${money(b.amount)} · سهم من ${money(myShare(b.amount))}</span>`:''}${clash?'<span class="clash">تداخل زمانی</span>':''}${b.note?`<span>${esc(b.note)}</span>`:''}</div>
     </div></button>`;
 }
 
@@ -354,14 +392,13 @@ function openForm(opts){
   openSheet(`
     <div class="sheethead"><h2>${b?'ویرایش نوبت':'نوبت جدید'}</h2><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
     <div class="field"><span class="flabel">روز</span>
-      <div class="chips" id="fDays">
-        ${[[t0,'امروز'],[addDays(t0,1),'فردا'],[addDays(t0,2),'پس‌فردا']].map(([d,l])=>`<button class="chip" data-d="${d}">${l}</button>`).join('')}
-        <button class="chip" id="fPrevD">روز قبل</button><button class="chip" id="fNextD">روز بعد</button>
-        <input type="hidden" id="fDate" value="${f.date}">
-      </div>
+      <input type="hidden" id="fDate" value="${f.date}">
+      <div class="cal" id="fCal"></div>
       <span class="hint" id="fDateFa"></span>
     </div>
-    <div class="field"><label for="fTime">ساعت</label><input type="time" class="inp ltr" id="fTime" step="900" value="${f.time}"></div>
+    <div class="field"><label for="fTime">ساعت</label>
+      <div class="frees" id="fFrees"></div>
+      <input type="time" class="inp ltr" id="fTime" step="900" value="${f.time}"></div>
     <div class="field"><label for="fCust">شماره موبایل یا آیدی اینستاگرام</label>
       <div class="hstack"><input class="inp ltr" id="fCust" inputmode="tel" autocomplete="off" placeholder="09xx xxx xxxx" value="${esc(f.customer)}"><button class="btn" id="fPaste">چسباندن</button></div>
       <div id="fHint"></div>
@@ -376,19 +413,40 @@ function openForm(opts){
       <input class="inp" id="fRef" list="refList" placeholder="اسم مانیکوریست یا همکار" value="${esc(f.ref)}" ${f.source==='mani'||f.source==='recep'?'':'hidden'}>
       <datalist id="refList">${refs.map(r=>`<option value="${esc(r)}">`).join('')}</datalist>
     </div>
-    <div class="field"><label for="fNote">یادداشت (اختیاری)</label><input class="inp" id="fNote" autocomplete="off" value="${esc(f.note)}"></div>
+    <div class="field"><label for="fAmt">مبلغ فاکتور (تومان، کل مبلغ)</label><input class="inp ltr" id="fAmt" inputmode="numeric" autocomplete="off" placeholder="مثلاً 1250000" value="${b&&b.amount?b.amount:''}">
+      <div class="money" id="fAmtFa"></div></div>
     <button class="btn primary wide" id="fSave">${b?'ذخیره‌ی تغییرات':'ثبت نوبت'}</button>
   `,sh=>{
     const dateIn=$('fDate');
-    const syncDays=()=>{sh.querySelectorAll('#fDays .chip[data-d]').forEach(c=>c.classList.toggle('on',c.dataset.d===dateIn.value));const d=faDay(dateIn.value);$('fDateFa').textContent=d.wd+' '+d.dt};
-    sh.querySelectorAll('#fDays .chip[data-d]').forEach(c=>c.addEventListener('click',()=>{dateIn.value=c.dataset.d;syncDays()}));
-    $('fPrevD').addEventListener('click',()=>{dateIn.value=addDays(dateIn.value,-1);syncDays()});
-    $('fNextD').addEventListener('click',()=>{dateIn.value=addDays(dateIn.value,1);syncDays()});
+    let calStart=satOf(dateIn.value);
+    const drawCal=()=>{
+      const days=[...Array(21)].map((_,i)=>addDays(calStart,i));
+      const m1=faPart(days[0],{month:'long'}), m2=faPart(days[20],{month:'long'}), y=faPart(days[20],{year:'numeric'});
+      const cells=days.map(iso=>{const n=dayBookings(iso).filter(x=>active(x)&&(!b||x.id!==b.id)).length;
+        return `<button class="cday${iso<t0?' past':''}${iso===t0?' today':''}${iso===dateIn.value?' on':''}" data-d="${iso}" aria-label="${esc(faDay(iso).wd+' '+faDay(iso).dt)}"><span class="n">${faPart(iso,{day:'numeric'})}</span><span class="c">${iso===t0?'امروز':n?fa(n)+' نوبت':''}</span></button>`}).join('');
+      $('fCal').innerHTML=`<div class="calnav"><button type="button" data-cal="-21">→ قبلی</button><b>${m1===m2?m1:m1+' – '+m2} ${y}</b><button type="button" data-cal="21">بعدی ←</button></div>
+        <div class="calgrid">${['ش','ی','د','س','چ','پ','ج'].map(w=>`<span class="wdh">${w}</span>`).join('')}${cells}</div>`;
+    };
+    const syncDays=()=>{
+      drawCal();const d=faDay(dateIn.value);$('fDateFa').textContent=d.wd+' '+d.dt;
+      const gaps=gapsFor(dateIn.value,b&&b.id);
+      $('fFrees').innerHTML=gaps.length?'<span>خالی:</span>'+gaps.map(([x,y])=>`<button type="button" class="freechip" data-t="${fromMin(x)}">${faTime(fromMin(x))} تا ${faTime(fromMin(y))}</button>`).join(''):'<span class="full">این روز پر است</span>';
+    };
+    $('fCal').addEventListener('click',e=>{
+      const c=e.target.closest('[data-d]');if(c){dateIn.value=c.dataset.d;syncDays();return}
+      const n=e.target.closest('[data-cal]');if(n){calStart=addDays(calStart,Number(n.dataset.cal));drawCal()}
+    });
+    $('fFrees').addEventListener('click',e=>{const c=e.target.closest('[data-t]');if(c){$('fTime').value=c.dataset.t;toast('ساعت '+fa(c.dataset.t)+' انتخاب شد')}});
     syncDays();
     const svcBox=$('fSvc');
     const syncDur=()=>{const m=f.services.reduce((a,id)=>a+((svc(id)||{}).min||0),0);$('fDur').textContent=m?`مدت: ${fa(m)} دقیقه`:'یک یا چند خدمت را انتخاب کن'};
     svcBox.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{const id=c.dataset.s;const i=f.services.indexOf(id);i>=0?f.services.splice(i,1):f.services.push(id);c.classList.toggle('on',i<0);syncDur()}));
     syncDur();
+    const amtIn=$('fAmt');let amtTouched=!!amtIn.value;
+    const showAmt=()=>{const v=num(amtIn.value);$('fAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>`:''};
+    const guessAmt=()=>{if(amtTouched)return;const g=f.services.reduce((a,id)=>a+((svc(id)||{}).price||0),0);amtIn.value=g||'';showAmt()};
+    amtIn.addEventListener('input',()=>{amtTouched=!!amtIn.value;showAmt()});showAmt();
+    svcBox.addEventListener('click',()=>setTimeout(guessAmt,0));
     sh.querySelectorAll('#fSrc .chip').forEach(c=>c.addEventListener('click',()=>{f.source=c.dataset.k;sh.querySelectorAll('#fSrc .chip').forEach(x=>x.classList.toggle('on',x===c));$('fRef').hidden=!(f.source==='mani'||f.source==='recep')}));
     const custIn=$('fCust');
     const showHint=()=>{
@@ -414,10 +472,10 @@ function openForm(opts){
       if(!cust&&rawCust&&!$('fName').value.trim()) $('fName').value=rawCust;
       if(!time){toast('ساعت را وارد کن');$('fTime').focus();return}
       if(!f.services.length){toast('خدمت را انتخاب کن');return}
-      const rec={date:dateIn.value||view,time,customer:cust,name:$('fName').value.trim(),services:f.services,source:f.source,ref:(f.source==='mani'||f.source==='recep')?$('fRef').value.trim():'',note:$('fNote').value.trim()};
+      const rec={date:dateIn.value||view,time,customer:cust,name:$('fName').value.trim(),services:f.services,source:f.source,ref:(f.source==='mani'||f.source==='recep')?$('fRef').value.trim():'',amount:num(amtIn.value)||null};
       if(cust){S.customers[cust]=Object.assign(S.customers[cust]||{},rec.name?{name:rec.name}:{} ,{seen:Date.now()})}
       if(b){Object.assign(b,rec,{updated:Date.now()})}
-      else S.bookings.push(Object.assign({id:uid(),status:'booked',amount:null,created:Date.now()},rec));
+      else S.bookings.push(Object.assign({id:uid(),status:'booked',note:'',created:Date.now()},rec));
       save();if(mode==='day')view=rec.date;closeSheet();render();toast(b?'تغییرات ذخیره شد':'نوبت ثبت شد');
     });
   });
@@ -433,15 +491,15 @@ function openActions(id){
     <div class="sheethead"><h2>${faTime(b.time)} · ${(b.services||[]).map(svcLabel).join(' + ')}</h2><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
     <div class="who">${esc(b.name||c.name||'بدون اسم')} ${b.customer?`<span class="ph">${isPhone?fa(b.customer):esc(b.customer)}</span>`:''}</div>
     ${isPhone?`<div class="grid2"><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="tel:${b.customer}">تماس</a><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="sms:${b.customer}">پیامک</a></div>`:''}
-    <div class="field"><label for="aAmt">مبلغ دریافتی (تومان)</label>
+    <div class="field"><label for="aAmt">مبلغ فاکتور (تومان، کل مبلغ)</label>
       <div class="hstack"><input class="inp ltr" id="aAmt" inputmode="numeric" placeholder="مثلاً 850000" value="${priceGuess}"><button class="btn ok" id="aDone">انجام شد ✓</button></div>
-      <span class="small" id="aAmtFa"></span></div>
+      <div class="money" id="aAmtFa"></div></div>
     <div class="grid2"><button class="btn bad" id="aCancel">لغو شد</button><button class="btn bad" id="aNoshow">نیامد</button></div>
     ${b.status!=='booked'?'<button class="btn" id="aReset">برگرداندن به «رزرو»</button>':''}
     <div class="grid2"><button class="btn" id="aEdit">ویرایش</button><button class="btn bad" id="aDel">حذف</button></div>
     ${h.length?`<div class="sect"><h3>سابقه‌ی این مشتری</h3><div class="hist">${h.slice(0,6).map(x=>`<span>${faDay(x.date).short} · ${x.services.map(svcLabel).join('، ')}${x.amount?' · '+money(x.amount):''}</span>`).join('')}</div></div>`:''}
   `,()=>{
-    const amt=$('aAmt');const showFa=()=>{const v=Number(latin(amt.value).replace(/\D/g,''));$('aAmtFa').textContent=v?money(v)+' تومان':''};
+    const amt=$('aAmt');const showFa=()=>{const v=num(amt.value);$('aAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>`:''};
     amt.addEventListener('input',showFa);showFa();
     const set=(st,extra)=>{Object.assign(b,{status:st,updated:Date.now()},extra||{});save();closeSheet();render();toast(STATUS[st])};
     $('aDone').addEventListener('click',()=>{const v=Number(latin(amt.value).replace(/\D/g,''))||null;set('done',{amount:v})});
@@ -458,11 +516,11 @@ function openActions(id){
 
 /* backup + settings */
 function csv(){
-  const head=['id','date_shamsi','date','time','customer','name','services','minutes','source','referrer','status','amount','note','created_at'];
+  const head=['id','date_shamsi','date','time','customer','name','services','minutes','source','referrer','status','amount','share_pct','my_share','note','created_at'];
   const q=v=>{v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
   const rows=[...S.bookings].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).map(b=>[
     b.id,shamsi(b.date),b.date,b.time,b.customer,b.name||(S.customers[b.customer]||{}).name||'',
-    (b.services||[]).map(svcLabel).join('+'),dur(b),(SOURCES.find(s=>s[0]===b.source)||[,''])[1],b.ref||'',STATUS[b.status],b.amount??'',b.note||'',new Date(b.created).toISOString()]);
+    (b.services||[]).map(svcLabel).join('+'),dur(b),(SOURCES.find(s=>s[0]===b.source)||[,''])[1],b.ref||'',STATUS[b.status],b.amount??'',S.settings.sharePct||65,b.amount?myShare(b.amount):'',b.note||'',new Date(b.created).toISOString()]);
   return [head,...rows].map(r=>r.map(q).join(',')).join('\n');
 }
 function stamp(){return shamsi(todayIso()).replace(/\//g,'-')}
@@ -521,6 +579,7 @@ function openMenu(){
       <div id="mSvcs" style="display:flex;flex-direction:column;gap:6px">${S.settings.services.map((s,i)=>`<div class="svcrow"><input class="inp" id="sl${i}" value="${esc(s.label)}"><input class="inp ltr" id="sm${i}" inputmode="numeric" value="${s.min}"><input class="inp ltr" id="sp${i}" inputmode="numeric" value="${s.price||''}"></div>`).join('')}</div>
       <button class="btn" id="mAddSvc">+ خدمت جدید</button>
       <div class="grid2"><div class="field"><label for="mStart">شروع کار</label><input type="time" class="inp ltr" id="mStart" value="${S.settings.dayStart}"></div><div class="field"><label for="mEnd">پایان کار</label><input type="time" class="inp ltr" id="mEnd" value="${S.settings.dayEnd}"></div></div>
+      <div class="field"><label for="mPct">سهم من از هر فاکتور (درصد)</label><input class="inp ltr" id="mPct" inputmode="numeric" value="${S.settings.sharePct||65}"></div>
       <button class="btn primary" id="mSaveSet">ذخیره‌ی تنظیمات</button>
     </div>
     <div class="sect"><h3>امتحان</h3>
@@ -537,7 +596,7 @@ function openMenu(){
     $('mDoRestoreFile').addEventListener('click',e=>restoreFrom(fileText,e.target,rs));
     $('mDoRestore').addEventListener('click',e=>restoreFrom($('mRestore').value,e.target,rs));
     $('mAddSvc').addEventListener('click',()=>{collectSvcs();S.settings.services.push({id:'s'+uid(),label:'خدمت جدید',min:30,price:0});save();openMenu()});
-    $('mSaveSet').addEventListener('click',()=>{collectSvcs();S.settings.dayStart=$('mStart').value||'09:00';S.settings.dayEnd=$('mEnd').value||'21:00';save();closeSheet();render();toast('تنظیمات ذخیره شد')});
+    $('mSaveSet').addEventListener('click',()=>{collectSvcs();S.settings.dayStart=$('mStart').value||'09:00';S.settings.dayEnd=$('mEnd').value||'21:00';{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
     $('mSample')&&$('mSample').addEventListener('click',()=>{makeSamples();save();closeSheet();view=todayIso();render();toast('نوبت‌های نمونه ساخته شد')});
     $('mClearSample')&&$('mClearSample').addEventListener('click',()=>{S.bookings=S.bookings.filter(b=>!b.sample);Object.keys(S.customers).forEach(k=>{if(S.customers[k].sample)delete S.customers[k]});save();closeSheet();render();toast('نمونه‌ها پاک شد')});
   });

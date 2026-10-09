@@ -1,5 +1,5 @@
 // Offline-first: app files are served from cache, then refreshed in the background.
-const CACHE = 'daftar-v2';
+const CACHE = 'daftar-v3';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'fonts/Vazirmatn-var.woff2',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-180.png'];
 self.addEventListener('install', e => {
