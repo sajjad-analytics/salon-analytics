@@ -237,7 +237,9 @@ function normCustomer(s){
   return d;
 }
 const num=v=>Number(latin(v).replace(/\D/g,''))||0;
-const myShare=n=>Math.round((n||0)*(Number(S.settings.sharePct)||65)/100);
+const curPct=()=>Number(S.settings.sharePct)||65;
+const myShare=n=>Math.round((n||0)*curPct()/100);
+const shareOf=b=>Math.round((b.amount||0)*(b.pct!=null?b.pct:curPct())/100);
 const pct=()=>fa(Number(S.settings.sharePct)||65)+'٪';
 function satOf(iso){const d=dateOf(iso);return addDays(iso,-((d.getDay()+1)%7))}
 function faPart(iso,opt){try{return new Intl.DateTimeFormat('fa-IR-u-ca-persian',opt).format(dateOf(iso))}catch(e){return ''}}
@@ -249,6 +251,8 @@ let storageOk=true;
 let S={v:1,bookings:[],customers:{},settings:JSON.parse(JSON.stringify(DEF_SETTINGS)),lastBackup:null};
 try{const raw=localStorage.getItem(KEY);if(raw){let o;try{o=JSON.parse(raw)}catch(pe){localStorage.setItem(KEY+'-corrupt-'+Date.now(),raw);throw pe}S=Object.assign(S,o);S.settings=Object.assign(JSON.parse(JSON.stringify(DEF_SETTINGS)),o.settings||{});}}catch(e){storageOk=false}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));storageOk=true}catch(e){storageOk=false;toast('ذخیره نشد: حافظه‌ی مرورگر در دسترس نیست')}}
+// migration: lock the share % on bookings that already have an amount
+S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=curPct()});
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 
 let view=todayIso();
@@ -267,8 +271,10 @@ function history(cust,exceptId){
 /* ---------- render ---------- */
 const $=id=>document.getElementById(id);
 function dayBookings(iso){return S.bookings.filter(b=>b.date===iso).sort((a,b)=>toMin(a.time)-toMin(b.time)||a.created-b.created)}
+function nowFloor(iso){const t=todayIso();if(iso<t)return Infinity;if(iso>t)return -1;const d=new Date();return Math.ceil((d.getHours()*60+d.getMinutes())/15)*15}
 function gapsFor(iso,exceptId){
-  const start=toMin(S.settings.dayStart), end=toMin(S.settings.dayEnd);let cursor=start;const out=[];
+  const start=toMin(S.settings.dayStart), end=toMin(S.settings.dayEnd);let cursor=Math.max(start,nowFloor(iso));const out=[];
+  if(cursor>=end)return out;
   dayBookings(iso).filter(b=>active(b)&&b.id!==exceptId).forEach(b=>{const s=toMin(b.time);if(s-cursor>=30)out.push([cursor,s]);cursor=Math.max(cursor,s+dur(b))});
   if(end-cursor>=30)out.push([cursor,end]);return out;
 }
@@ -309,7 +315,7 @@ function render(){
   const total=done.reduce((a,b)=>a+(b.amount||0),0), noAmt=done.filter(b=>!b.amount).length;
   $('summary').innerHTML=
     `<span>رزرو <b>${fa(booked.length)}</b></span><span>انجام <b>${fa(done.length)}</b></span><span>لغو/نیامد <b>${fa(lost.length)}</b></span>`+
-    `<span class="total">سهم من <b>${money(myShare(total))}</b>${noAmt?` <span class="clash">(${fa(noAmt)} بدون مبلغ)</span>`:''}</span>`;
+    `<span class="total">سهم من <b>${money(done.reduce((a,b)=>a+shareOf(b),0))}</b>${noAmt?` <span class="clash">(${fa(noAmt)} بدون مبلغ)</span>`:''}</span>`;
   renderDayList();
 }
 function renderBackupWarn(){
@@ -322,12 +328,8 @@ function renderBackupWarn(){
 function renderDayList(){
   const day=dayBookings(view);
   const list=$('list');let html='';
-  const start=toMin(S.settings.dayStart), end=toMin(S.settings.dayEnd);
-  const act=day.filter(active);
   // gaps and entries merged in time order (gap sorts before an entry at the same minute)
-  let cursor=start; const seq=[];
-  act.forEach(b=>{const s=toMin(b.time);if(s-cursor>=30)seq.push({t:cursor,k:0,gap:[cursor,s]});cursor=Math.max(cursor,s+dur(b));});
-  if(end-cursor>=30) seq.push({t:cursor,k:0,gap:[cursor,end]});
+  const seq=gapsFor(view).map(g=>({t:g[0],k:0,gap:g}));
   day.forEach(b=>seq.push({t:toMin(b.time),k:1,b}));
   seq.sort((a,b)=>a.t-b.t||a.k-b.k);
   let lastEnd=-1;
@@ -341,18 +343,18 @@ function renderDayList(){
   if(!day.length) html+=`<p class="empty-note">برای این روز نوبتی ثبت نشده. روی بازه‌ی خالی یا «نوبت جدید» بزن.</p>`;
   else{
     const done=day.filter(b=>b.status==='done'), pend=day.filter(b=>b.status==='booked');
-    const tot=done.reduce((a,b)=>a+(b.amount||0),0), noAmt=done.filter(b=>!b.amount).length, mine=done.reduce((a,b)=>a+myShare(b.amount),0);
+    const tot=done.reduce((a,b)=>a+(b.amount||0),0), noAmt=done.filter(b=>!b.amount).length, mine=done.reduce((a,b)=>a+shareOf(b),0);
     html+=`<section class="dayend"><h3>جمع روز</h3>
       <div class="r"><span>خدمت انجام‌شده</span><span>${fa(done.length)}</span></div>
       <div class="r"><span>جمع فاکتورها</span><span>${money(tot)} تومان</span></div>
-      <div class="r big"><span>سهم من (${pct()})</span><span>${money(mine)} تومان</span></div>
+      <div class="r big"><span>سهم من (${(()=>{const ps=[...new Set(done.filter(b=>b.amount).map(b=>b.pct!=null?b.pct:curPct()))];return ps.length>1?'درصدهای مختلف':fa(ps.length?ps[0]:curPct())+'٪'})()})</span><span>${money(mine)} تومان</span></div>
       <div class="r small"><span>سهم سالن</span><span>${money(tot-mine)} تومان</span></div>
       ${noAmt?`<div class="clash">${fa(noAmt)} خدمت انجام‌شده مبلغ ندارد و در جمع حساب نشده.</div>`:''}
       ${pend.length&&view<=todayIso()?`<div class="small">${fa(pend.length)} نوبت هنوز «رزرو» است و در جمع نیامده.</div><button class="btn ok" id="allDone">همه را «انجام شد» ثبت کن</button>`:''}
     </section>`;
   }
   list.innerHTML=html;
-  const ad=$('allDone');if(ad)ad.addEventListener('click',e=>{e.stopPropagation();day.filter(b=>b.status==='booked').forEach(b=>{b.status='done';b.updated=Date.now()});save();render();toast('همه ثبت شد')});
+  const ad=$('allDone');if(ad)ad.addEventListener('click',e=>{e.stopPropagation();day.filter(b=>b.status==='booked').forEach(b=>{b.status='done';b.updated=Date.now();if(b.amount&&b.pct==null)b.pct=curPct()});save();render();toast('همه ثبت شد')});
 }
 function gapHtml(a,b){
   return `<button class="gapitem" data-gap="${fromMin(a)}"><span>خالی · <b>${faTime(fromMin(a))}</b> تا <b>${faTime(fromMin(b))}</b> · ${fa(b-a)} دقیقه</span><span class="plus">+ ثبت</span></button>`;
@@ -368,7 +370,7 @@ function itemHtml(b,clash){
     <div class="body">
       <div class="line1">${(b.services||[]).map(id=>`<span class="svc">${esc(svcLabel(id))}</span>`).join('')}<span class="pill">${STATUS[b.status]}</span>${b.sample?'<span class="sampletag">نمونه</span>':''}</div>
       <div class="who">${name?esc(name)+' ':''}${custTxt}</div>
-      <div class="meta">${h.length?`<span>${fa(h.length)} مراجعه‌ی قبلی</span>`:(b.customer?'<span class="new">مشتری جدید</span>':'')}${src&&b.source!=='direct'?`<span>از: ${src[1]}${b.ref?' ('+esc(b.ref)+')':''}</span>`:''}${b.amount&&active(b)?`<span>فاکتور ${money(b.amount)} · سهم من ${money(myShare(b.amount))}</span>`:''}${clash?'<span class="clash">تداخل زمانی</span>':''}${b.note?`<span>${esc(b.note)}</span>`:''}</div>
+      <div class="meta">${h.length?`<span>${fa(h.length)} مراجعه‌ی قبلی</span>`:(b.customer?'<span class="new">مشتری جدید</span>':'')}${src&&b.source!=='direct'?`<span>از: ${src[1]}${b.ref?' ('+esc(b.ref)+')':''}</span>`:''}${b.amount&&active(b)?`<span>فاکتور ${money(b.amount)} · سهم من ${money(shareOf(b))}</span>`:''}${clash?'<span class="clash">تداخل زمانی</span>':''}${b.note?`<span>${esc(b.note)}</span>`:''}</div>
     </div></button>`;
 }
 
@@ -443,19 +445,22 @@ function openForm(opts){
     svcBox.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{const id=c.dataset.s;const i=f.services.indexOf(id);i>=0?f.services.splice(i,1):f.services.push(id);c.classList.toggle('on',i<0);syncDur()}));
     syncDur();
     const amtIn=$('fAmt');let amtTouched=!!amtIn.value;
-    const showAmt=()=>{const v=num(amtIn.value);$('fAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>`:''};
+    const showAmt=()=>{const v=num(amtIn.value);$('fAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>${v<10000?'<span class="clash">مبلغ خیلی کم است؛ کل مبلغ را به تومان بنویس.</span>':''}`:''};
     const guessAmt=()=>{if(amtTouched)return;const g=f.services.reduce((a,id)=>a+((svc(id)||{}).price||0),0);amtIn.value=g||'';showAmt()};
     amtIn.addEventListener('input',()=>{amtTouched=!!amtIn.value;showAmt()});showAmt();
     svcBox.addEventListener('click',()=>setTimeout(guessAmt,0));
     sh.querySelectorAll('#fSrc .chip').forEach(c=>c.addEventListener('click',()=>{f.source=c.dataset.k;sh.querySelectorAll('#fSrc .chip').forEach(x=>x.classList.toggle('on',x===c));$('fRef').hidden=!(f.source==='mani'||f.source==='recep')}));
     const custIn=$('fCust');
+    let autoName='';
     const showHint=()=>{
       const c=normCustomer(custIn.value);const box=$('fHint');
       if(!c){box.innerHTML='';return}
-      if(!c.startsWith('@')&&!/^09\d{9}$/.test(c)){box.innerHTML=c.length>=4?`<div class="hint">شماره ${fa(c.length)} رقمی است؛ موبایل باید ۱۱ رقم باشد.</div>`:'';return}
+      if(!c.startsWith('@')&&!/^09\d{9}$/.test(c)){box.innerHTML=c.length>=4?`<div class="hint">${c.length===11?'این شماره موبایل نیست (موبایل با ۰۹ شروع می‌شود).':`شماره ${fa(c.length)} رقمی است؛ موبایل ۱۱ رقم است.`}</div>`:'';return}
       const h=history(c,b&&b.id);const known=S.customers[c];
-      if(known&&known.name&&!$('fName').value) $('fName').value=known.name;
-      if(h.length){const l=h[0];box.innerHTML=`<div class="hint"><b>مشتری قبلی</b> · ${fa(h.length)} مراجعه · آخرین: ${faDay(l.date).short} (${l.services.map(svcLabel).join('، ')})</div>`}
+      const nm=$('fName');
+      if(known&&known.name&&(!nm.value||nm.value===autoName)){nm.value=known.name;autoName=known.name}
+      else if(!known&&autoName&&nm.value===autoName){nm.value='';autoName=''}
+      if(h.length){const l=h[0];box.innerHTML=`<div class="hint"><b>مشتری قبلی</b> · ${fa(h.length)} مراجعه · آخرین: ${faDay(l.date).short} (${esc(l.services.map(svcLabel).join('، '))})</div>`}
       else if(known){box.innerHTML=`<div class="hint">این شماره قبلاً ثبت شده ولی هنوز خدمتی انجام نشده.</div>`}
       else box.innerHTML=`<div class="hint"><b>مشتری جدید</b></div>`;
     };
@@ -473,6 +478,7 @@ function openForm(opts){
       if(!time){toast('ساعت را وارد کن');$('fTime').focus();return}
       if(!f.services.length){toast('خدمت را انتخاب کن');return}
       const rec={date:dateIn.value||view,time,customer:cust,name:$('fName').value.trim(),services:f.services,source:f.source,ref:(f.source==='mani'||f.source==='recep')?$('fRef').value.trim():'',amount:num(amtIn.value)||null};
+      rec.pct=rec.amount?(b&&b.pct!=null?b.pct:curPct()):null;
       if(cust){S.customers[cust]=Object.assign(S.customers[cust]||{},rec.name?{name:rec.name}:{} ,{seen:Date.now()})}
       if(b){Object.assign(b,rec,{updated:Date.now()})}
       else S.bookings.push(Object.assign({id:uid(),status:'booked',note:'',created:Date.now()},rec));
@@ -488,7 +494,8 @@ function openActions(id){
   const priceGuess=b.amount||(b.services||[]).reduce((a,s)=>a+((svc(s)||{}).price||0),0)||'';
   const isPhone=b.customer&&!b.customer.startsWith('@');
   openSheet(`
-    <div class="sheethead"><h2>${faTime(b.time)} · ${(b.services||[]).map(svcLabel).join(' + ')}</h2><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
+    <div class="sheethead"><h2>${faTime(b.time)} · ${esc((b.services||[]).map(svcLabel).join(' + '))}</h2>
+    <div class="small">${faDay(b.date).wd} ${faDay(b.date).dt}</div><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
     <div class="who">${esc(b.name||c.name||'بدون اسم')} ${b.customer?`<span class="ph">${isPhone?fa(b.customer):esc(b.customer)}</span>`:''}</div>
     ${isPhone?`<div class="grid2"><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="tel:${b.customer}">تماس</a><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="sms:${b.customer}">پیامک</a></div>`:''}
     <div class="field"><label for="aAmt">مبلغ فاکتور (تومان، کل مبلغ)</label>
@@ -497,12 +504,12 @@ function openActions(id){
     <div class="grid2"><button class="btn bad" id="aCancel">لغو شد</button><button class="btn bad" id="aNoshow">نیامد</button></div>
     ${b.status!=='booked'?'<button class="btn" id="aReset">برگرداندن به «رزرو»</button>':''}
     <div class="grid2"><button class="btn" id="aEdit">ویرایش</button><button class="btn bad" id="aDel">حذف</button></div>
-    ${h.length?`<div class="sect"><h3>سابقه‌ی این مشتری</h3><div class="hist">${h.slice(0,6).map(x=>`<span>${faDay(x.date).short} · ${x.services.map(svcLabel).join('، ')}${x.amount?' · '+money(x.amount):''}</span>`).join('')}</div></div>`:''}
+    ${h.length?`<div class="sect"><h3>سابقه‌ی این مشتری</h3><div class="hist">${h.slice(0,6).map(x=>`<span>${faDay(x.date).short} · ${esc(x.services.map(svcLabel).join('، '))}${x.amount?' · '+money(x.amount):''}</span>`).join('')}</div></div>`:''}
   `,()=>{
-    const amt=$('aAmt');const showFa=()=>{const v=num(amt.value);$('aAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>`:''};
+    const amt=$('aAmt');const showFa=()=>{const v=num(amt.value);$('aAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${b.pct!=null?fa(b.pct)+'٪':pct()}): <b>${money(Math.round(v*(b.pct!=null?b.pct:curPct())/100))}</b></span>${v<10000?'<span class="clash">مبلغ خیلی کم است؛ کل مبلغ را به تومان بنویس.</span>':''}`:''};
     amt.addEventListener('input',showFa);showFa();
     const set=(st,extra)=>{Object.assign(b,{status:st,updated:Date.now()},extra||{});save();closeSheet();render();toast(STATUS[st])};
-    $('aDone').addEventListener('click',()=>{const v=Number(latin(amt.value).replace(/\D/g,''))||null;set('done',{amount:v})});
+    $('aDone').addEventListener('click',()=>{const v=num(amt.value)||null;set('done',{amount:v,pct:v?(b.pct!=null?b.pct:curPct()):null})});
     $('aCancel').addEventListener('click',()=>set('cancel'));
     $('aNoshow').addEventListener('click',()=>set('noshow'));
     $('aReset')&&$('aReset').addEventListener('click',()=>set('booked'));
@@ -520,7 +527,7 @@ function csv(){
   const q=v=>{v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
   const rows=[...S.bookings].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).map(b=>[
     b.id,shamsi(b.date),b.date,b.time,b.customer,b.name||(S.customers[b.customer]||{}).name||'',
-    (b.services||[]).map(svcLabel).join('+'),dur(b),(SOURCES.find(s=>s[0]===b.source)||[,''])[1],b.ref||'',STATUS[b.status],b.amount??'',S.settings.sharePct||65,b.amount?myShare(b.amount):'',b.note||'',new Date(b.created).toISOString()]);
+    (b.services||[]).map(svcLabel).join('+'),dur(b),(SOURCES.find(s=>s[0]===b.source)||[,''])[1],b.ref||'',STATUS[b.status],b.amount??'',b.amount?(b.pct!=null?b.pct:curPct()):'',b.amount?shareOf(b):'',b.note||'',new Date(b.created).toISOString()]);
   return [head,...rows].map(r=>r.map(q).join(',')).join('\n');
 }
 function stamp(){return shamsi(todayIso()).replace(/\//g,'-')}
@@ -596,13 +603,13 @@ function openMenu(){
     $('mDoRestoreFile').addEventListener('click',e=>restoreFrom(fileText,e.target,rs));
     $('mDoRestore').addEventListener('click',e=>restoreFrom($('mRestore').value,e.target,rs));
     $('mAddSvc').addEventListener('click',()=>{collectSvcs();S.settings.services.push({id:'s'+uid(),label:'خدمت جدید',min:30,price:0});save();openMenu()});
-    $('mSaveSet').addEventListener('click',()=>{collectSvcs();S.settings.dayStart=$('mStart').value||'09:00';S.settings.dayEnd=$('mEnd').value||'21:00';{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
+    $('mSaveSet').addEventListener('click',()=>{collectSvcs();{const st=$('mStart').value||'09:00',en=$('mEnd').value||'21:00';if(toMin(en)<=toMin(st)){toast('ساعت پایان کار باید بعد از شروع باشد');return}S.settings.dayStart=st;S.settings.dayEnd=en}{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
     $('mSample')&&$('mSample').addEventListener('click',()=>{makeSamples();save();closeSheet();view=todayIso();render();toast('نوبت‌های نمونه ساخته شد')});
     $('mClearSample')&&$('mClearSample').addEventListener('click',()=>{S.bookings=S.bookings.filter(b=>!b.sample);Object.keys(S.customers).forEach(k=>{if(S.customers[k].sample)delete S.customers[k]});save();closeSheet();render();toast('نمونه‌ها پاک شد')});
   });
 }
 function collectSvcs(){
-  S.settings.services.forEach((s,i)=>{const l=$('sl'+i);if(!l)return;s.label=l.value.trim()||s.label;s.min=Number(latin($('sm'+i).value))||s.min;s.price=Number(latin($('sp'+i).value).replace(/\D/g,''))||0});
+  S.settings.services.forEach((s,i)=>{const l=$('sl'+i);if(!l)return;s.label=l.value.trim()||s.label;s.min=num($('sm'+i).value)||s.min;s.price=num($('sp'+i).value)});
 }
 function makeSamples(){
   const t=todayIso(),f=addDays(t,1),p=addDays(t,-20);
