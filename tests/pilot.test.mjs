@@ -1,5 +1,5 @@
 // Tests for the pilot (SMS experiment) logic in docs/index.html.
-// Run: node --test tests/
+// Run: node --test tests/*.test.mjs
 // The pure functions live in one block of index.html between the PILOT-CORE markers;
 // this file extracts that block and evaluates it, so the app stays a single file.
 // All data here is synthetic (fake names, 0912000xxxx-style numbers).
@@ -25,7 +25,7 @@ function fakeRows(n) {
   const rows = [];
   for (let i = 0; i < n; i++) {
     const gap = 45 + (i * 7) % 46; // 45..90
-    rows.push([i + 1, 'مشتری ساختگی ' + (i + 1), '', PC.addDaysIso(DRAW_DAY, -gap), 1 + (i % 3), 'پدیکور', 400000,
+    rows.push([i + 1, 'مشتری ساختگی ' + String(i + 1).padStart(3, '0'), '', PC.addDaysIso(DRAW_DAY, -gap), 1 + (i % 3), 'پدیکور', 400000,
       '0912000' + String(i).padStart(4, '0'), 'گوشی', '', ''].join(','));
   }
   return CSV_HEAD + '\n' + rows.join('\n');
@@ -187,6 +187,13 @@ test('7. today view holds message arm only (I1)', () => {
   assert.equal(v.items.length, d.picked.length - ctl.length);
   assert.ok(v.items.every(it => it.text.includes('سالن ساختگی')));
   assert.deepEqual(PC.todayView(p, '2030-01-01'), {date: '2030-01-01', items: [], controlCount: 0, sent: 0, total: 0});
+  // replies arriving on later days: earlier sends are listed, still without any control member
+  v.items.slice(0, 3).forEach((it, i) => PC.recordSent(p, it.key, T0 + i));
+  const later = PC.recentSent(p, PC.addDaysIso(DRAW_DAY, 2), 7);
+  assert.equal(later.length, 3);
+  assert.ok(!JSON.stringify(later).includes(ctl[0].name));
+  assert.equal(PC.recentSent(p, DRAW_DAY, 7).length, 0, 'today\'s sends are on the main list');
+  assert.equal(PC.recentSent(p, PC.addDaysIso(DRAW_DAY, 9), 7).length, 0);
   // sending to a control key is refused
   assert.throws(() => PC.recordSent(p, ctl[0].key, T0), /message/);
 });
@@ -364,4 +371,28 @@ test('12b. a sent mark is corrected, never deleted (I2)', () => {
   assert.equal(p.sends[k].sentAt, null);
   assert.equal(p.sends[k].history.length, 2);
   assert.ok(p.log.some(e => e.event === 'correct' && e.person === k));
+});
+
+// ---------- 13. cross-language: Python re-derives the same allocation ----------
+test('13. tools/verify_allocation.py reproduces every draw 100%', async t => {
+  const {execFileSync} = await import('node:child_process');
+  const {mkdtempSync, writeFileSync} = await import('node:fs');
+  const {tmpdir} = await import('node:os');
+  try { execFileSync('python3', ['--version']) } catch { t.skip('python3 not installed'); return }
+  const p = lockedPilot(150);
+  // three days in a row, Persian keys, odd-sized strata
+  PC.commitDraw(p, DRAW_DAY, 123456, [], T0);
+  PC.commitDraw(p, PC.addDaysIso(DRAW_DAY, 1), 999999, [], T0);
+  PC.commitDraw(p, PC.addDaysIso(DRAW_DAY, 2), 7, [], T0);
+  const dir = mkdtempSync(tmpdir() + '/pilot-');
+  writeFileSync(dir + '/log.csv', '﻿' + PC.logCsv(p));
+  writeFileSync(dir + '/pilot.csv', '﻿' + PC.pilotCsv(p, [], DRAW_DAY));
+  const out = execFileSync('python3', ['-I', new URL('../tools/verify_allocation.py', import.meta.url).pathname, dir + '/log.csv', dir + '/pilot.csv']).toString();
+  assert.match(out, /100% identical/, out);
+  assert.equal((out.match(/allocation OK/g) || []).length, 3, out);
+  // and a tampered log is caught
+  const p2 = JSON.parse(JSON.stringify(p));
+  p2.log.find(e => e.event === 'draw').detail.picked[0].arm = p2.log.find(e => e.event === 'draw').detail.picked[0].arm === 'message' ? 'control' : 'message';
+  writeFileSync(dir + '/log2.csv', PC.logCsv(p2));
+  assert.throws(() => execFileSync('python3', ['-I', new URL('../tools/verify_allocation.py', import.meta.url).pathname, dir + '/log2.csv'], {stdio: 'pipe'}));
 });
