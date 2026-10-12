@@ -300,7 +300,7 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   await pg.goto(ORIGIN + '/');
   assert.equal(await pg.title(), 'دفتر نوبت مژگان');
   const keys = await pg.evaluate(() => caches.keys());
-  assert.ok(keys.includes('daftar-v6') && keys.some(k => k.startsWith('daftar-preview-')), 'both caches survive: ' + keys);
+  assert.ok(keys.includes(readFileSync(join(DOCS, 'sw.js'), 'utf8').match(/const CACHE = '([^']+)'/)[1]) && keys.some(k => k.startsWith('daftar-preview-')), 'both caches survive: ' + keys);
   await ctx.close();
   console.log('D ok: preview isolated (storage, worker, cache)');
 }
