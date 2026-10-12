@@ -247,6 +247,25 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   await shot(p2, '10-messages-empty');
 }
 
+// E. importing the Excel workbook itself (.xlsx with title rows, a sample row and summary rows)
+{
+  const pe = await newPage();
+  await pe.goto(ORIGIN + '/');
+  await pe.click('#menuBtn'); await pe.click('#mPilot');
+  await pe.setInputFiles('#aCsv', join(ROOT, 'tests/fixtures/list-synthetic.xlsx'));
+  await pe.waitForSelector('#aImpYes:not([disabled])');
+  const txt = await pe.textContent('#pilotRoot .dayend');
+  assert.ok(txt.includes('ردیف «نمونه» وارد نمی‌شود') && txt.includes('ردیف جمع'), txt);
+  await pe.click('#aImpYes');
+  const st = await state(pe);
+  assert.equal(Object.keys(st.pilot.people).length, 4);
+  // a file that is neither: clear message, import disabled
+  await pe.setInputFiles('#aCsv', {name: 'x.xlsx', mimeType: 'application/octet-stream', buffer: Buffer.from('PK\x03\x04 broken')});
+  await pe.waitForSelector('#aImpYes[disabled]');
+  assert.ok((await pe.textContent('#pilotRoot .dayend')).includes('این فایل خوانده نشد'));
+  console.log('E ok: xlsx import');
+}
+
 // D. preview copy: own storage key and service worker; the real app's worker never answers for it
 {
   const ctx = await browser.newContext({viewport: {width: 375, height: 812}, serviceWorkers: 'allow', acceptDownloads: true});

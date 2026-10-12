@@ -359,10 +359,16 @@ const hk=s=>normName(s).replace(/[\s()؟?:_\-]/g,'');
 const SRC_IN={'گوشی':'phone','دفتر':'book','دایرکت':'dm','پیدانشد':'none','phone':'phone','book':'book','dm':'dm','none':'none'};
 const YES=/^(بله|آره|اره|دارد|داره|yes|y|true|1|✓)$/i;
 const intOf=v=>{const d=latin(v).replace(/[,٬\s]/g,'');return /^\d+(\.\d+)?$/.test(d)?Math.round(+d):NaN};
-function readList(text){
-  const rows=parseCsv(text), out={people:[],errors:[],dupes:[],missing:[]};
-  if(!rows.length){out.missing=[COLS.name,COLS.shamsi];return out}
-  const head=rows[0].map(hk), col={};
+// Excel stores dates as day numbers since 1899-12-30
+const excelSerialToIso=n=>addDaysIso('1899-12-30',Math.floor(n));
+const readList=text=>readListRows(parseCsv(text));
+// rows: arrays of cell strings (from CSV or .xlsx). The header row may sit below a few title rows;
+// a row whose «ردیف» says «نمونه» is the workbook's example and is skipped.
+function readListRows(rows){
+  const out={people:[],errors:[],dupes:[],missing:[],skippedSample:0,skippedNotes:0};
+  const hi=rows.slice(0,15).findIndex(r=>r.some(c=>hk(c)===hk(COLS.name)));
+  if(hi<0){out.missing=[COLS.name,COLS.shamsi,COLS.visits];return out}
+  const head=rows[hi].map(hk), col={};
   for(const k in COLS){const i=head.indexOf(hk(COLS[k]));if(i>=0)col[k]=i}
   if(col.name==null)out.missing.push(COLS.name);
   if(col.shamsi==null&&col.greg==null)out.missing.push(COLS.shamsi);
@@ -370,10 +376,13 @@ function readList(text){
   if(out.missing.length)return out;
   const get=(r,k)=>col[k]==null?'':String(r[col[k]]??'').trim();
   const seen={};
-  rows.slice(1).forEach((r,i)=>{
-    const line=i+2, name=get(r,'name').replace(/\s+/g,' ');
+  rows.slice(hi+1).forEach((r,i)=>{
+    const line=hi+i+2, name=get(r,'name').replace(/\s+/g,' ');
     if(!name)return;
-    const s=parseDate(get(r,'shamsi')), g=parseDate(get(r,'greg'));
+    if(hk(get(r,'row'))==='نمونه'){out.skippedSample++;return}
+    if(/^[\d.,٬\s]+$/.test(latin(name))){out.skippedNotes++;return} // a total/summary line under the table, not a person
+    const gv=get(r,'greg');
+    const s=parseDate(get(r,'shamsi')), g=/^\d{5}(\.\d+)?$/.test(gv)?excelSerialToIso(+gv):parseDate(gv);
     if(!s&&!g){out.errors.push({line,name,msg:'تاریخ آخرین مراجعه خوانده نشد'});return}
     if(s&&g&&s!==g){out.errors.push({line,name,msg:'تاریخ شمسی و میلادی یکی نیستند'});return}
     const visits=intOf(get(r,'visits'));
@@ -385,6 +394,47 @@ function readList(text){
       phone:normPhone(get(r,'phone')),phoneSrc:SRC_IN[hk(get(r,'src'))]||'',future:YES.test(get(r,'future')),note:get(r,'note')});
   });
   return out;
+}
+
+/* .xlsx without a library: read the zip directory, inflate with the browser's DecompressionStream,
+   and pull cell text from the first sheet. Returns rows of strings like parseCsv. */
+const xmlText=s=>s.replace(/&(lt|gt|amp|quot|apos|#\d+|#x[0-9a-f]+);/gi,(m,e)=>({lt:'<',gt:'>',amp:'&',quot:'"',apos:"'"}[e]||String.fromCodePoint(e[1]==='x'||e[1]==='X'?parseInt(e.slice(2),16):+e.slice(1))));
+const tTexts=x=>[...x.replace(/<rPh[\s\S]*?<\/rPh>/g,'').matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map(m=>xmlText(m[1])).join('');
+async function readXlsx(buf){
+  const u8=buf instanceof Uint8Array?buf:new Uint8Array(buf), dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength), td=new TextDecoder();
+  let e=u8.length-22;while(e>=0&&dv.getUint32(e,true)!==0x06054b50)e--;
+  if(e<0)throw new Error('not an xlsx file');
+  const files={};let p=dv.getUint32(e+16,true);
+  for(let i=dv.getUint16(e+10,true);i>0&&dv.getUint32(p,true)===0x02014b50;i--){
+    const nl=dv.getUint16(p+28,true);
+    files[td.decode(u8.subarray(p+46,p+46+nl))]={method:dv.getUint16(p+10,true),size:dv.getUint32(p+20,true),off:dv.getUint32(p+42,true)};
+    p+=46+nl+dv.getUint16(p+30,true)+dv.getUint16(p+32,true);
+  }
+  const read=async name=>{
+    const f=files[name];if(!f)return '';
+    const start=f.off+30+dv.getUint16(f.off+26,true)+dv.getUint16(f.off+28,true), data=u8.subarray(start,start+f.size);
+    if(f.method===0)return td.decode(data);
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  };
+  const ss=[...(await read('xl/sharedStrings.xml')).matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m=>tTexts(m[1]));
+  const rid=((await read('xl/workbook.xml')).match(/<sheet\b[^>]*\br:id="([^"]+)"/)||[])[1];
+  const rel=rid&&[...(await read('xl/_rels/workbook.xml.rels')).matchAll(/<Relationship\b[^>]*>/g)].map(m=>m[0]).find(x=>x.includes('Id="'+rid+'"'));
+  const target=rel&&(rel.match(/Target="([^"]+)"/)||[])[1];
+  const sheet=target?(target.startsWith('/')?target.slice(1):'xl/'+target):Object.keys(files).filter(n=>/^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort()[0];
+  const xml=await read(sheet);if(!xml)throw new Error('no sheet');
+  const colIdx=ref=>[...ref.replace(/\d+/g,'')].reduce((a,ch)=>a*26+ch.charCodeAt(0)-64,0)-1;
+  const rows=[];
+  for(const rm of xml.matchAll(/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g)){
+    const row=[];
+    for(const cm of (rm[1]||'').matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)){
+      const at=cm[1],body=cm[2]||'',r=(at.match(/\br="([A-Z]+)\d+"/)||[])[1],t=(at.match(/\bt="(\w+)"/)||[])[1];
+      const v=xmlText((body.match(/<v>([\s\S]*?)<\/v>/)||[])[1]||'');
+      const val=t==='s'?(ss[+v]||''):t==='inlineStr'?tTexts(body):v;
+      const ci=r?colIdx(r):row.length;while(row.length<ci)row.push('');row[ci]=val;
+    }
+    rows.push(row);
+  }
+  return rows.filter(r=>r.some(x=>String(x).trim()!==''));
 }
 
 /* pilot state (lives in S.pilot) */
@@ -589,7 +639,7 @@ function restoreState(cur,inc,DEF){
   return S;
 }
 
-return {latin,normCustomer,normPhone,normName,daysBetween,addDaysIso,jalaliToIso,parseDate,parseCsv,csvCell,readList,COLS,
+return {latin,normCustomer,normPhone,normName,daysBetween,addDaysIso,jalaliToIso,parseDate,excelSerialToIso,parseCsv,csvCell,readList,readListRows,readXlsx,COLS,
   DEFAULT_TEMPLATE,newPilot,mergeImport,lockList,setPhone,setNoMsg,removePerson,drawnKeys,armOf,
   STRATA,stratumOf,recentInApp,eligibility,mulberry32,shuffle,fnv1a,drawBatch,planDraw,commitDraw,
   firstName,firstService,fillTemplate,messageFor,smsHref,todayView,recentSent,REPLIES,recordOpen,recordSent,recordUnsent,recordReply,
@@ -1238,15 +1288,17 @@ function drawAdmin(r){
   if(p){const all=Object.values(p.people);h+=`<div class="small">${fa(all.length)} نفر · ${fa(all.filter(found).length)} با شماره · ${fa(all.filter(x=>x.note).length)} با یادداشت بازبینی</div>`}
   if(importResult)h+=`<div class="hint">آخرین ورود: ${fa(importResult.rows)} ردیف · ${fa(importResult.added)} نفر تازه · ${fa(importResult.updated)} به‌روز${importResult.skippedNew?` · ${fa(importResult.skippedNew)} نفر تازه وارد نشد (قفل)`:''}${importResult.skippedDrawn?` · ${fa(importResult.skippedDrawn)} قرعه‌خورده دست نخورد`:''}</div>`;
   if(importPreview){
-    const x=importPreview.res,ok=!x.missing.length&&!x.dupes.length&&x.people.length;
+    const x=importPreview.res,ok=!x.fail&&!x.missing.length&&!x.dupes.length&&x.people.length;
     h+=`<div class="dayend"><b>${esc(importPreview.name)}</b>`+
-      (x.missing.length?`<div class="clash">این ستون‌ها پیدا نشد: ${x.missing.map(esc).join('، ')}</div>`:
+      (x.fail?'<div class="clash">این فایل خوانده نشد. فایل اکسل (xlsx) یا CSV با UTF-8 بده.</div>':x.missing.length?`<div class="clash">این ستون‌ها پیدا نشد: ${x.missing.map(esc).join('، ')}</div>`:
       `<div class="r"><span>نفر</span><span>${fa(x.people.length)}</span></div><div class="r"><span>با شماره</span><span>${fa(x.people.filter(found).length)}</span></div><div class="r"><span>با یادداشت بازبینی</span><span>${fa(x.people.filter(y=>y.note).length)}</span></div>`)+
+      (x.skippedSample?`<div class="small">${fa(x.skippedSample)} ردیف «نمونه» وارد نمی‌شود.</div>`:'')+
+      (x.skippedNotes?`<div class="small">${fa(x.skippedNotes)} ردیف جمع/توضیحِ پایین جدول وارد نمی‌شود.</div>`:'')+
       (x.dupes.length?`<div class="clash">اسم تکراری (اول در فایل یکی‌شان را متفاوت کن): ${x.dupes.map(esc).join('، ')}</div>`:'')+
       (x.errors.length?`<div class="clash">${fa(x.errors.length)} ردیف وارد نمی‌شود:</div><div class="hist">${x.errors.slice(0,6).map(e=>`<span>ردیف ${fa(e.line)} (${esc(e.name)}): ${e.msg}</span>`).join('')}</div>`:'')+
       (p&&p.lockedAt?'<div class="small">فهرست قفل است: فقط «آخرین مراجعه»ی کسانی که هنوز قرعه نخورده‌اند به‌روز می‌شود.</div>':'')+
       `<div class="grid2"><button class="btn" id="aImpNo">انصراف</button><button class="btn primary" id="aImpYes"${ok?'':' disabled'}>وارد کن</button></div></div>`;
-  }else h+=`<label class="btn filebtn">${p?'ورود دوباره (ادغام)':'انتخاب فایل CSV'}<input type="file" id="aCsv" accept=".csv,text/csv,text/plain"></label>`;
+  }else h+=`<label class="btn filebtn">${p?'ورود دوباره (ادغام)':'انتخاب فایل اکسل یا CSV'}<input type="file" id="aCsv" accept=".xlsx,.csv,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>`;
   h+=`</section>`;
   if(p){
     // 2. numbers
@@ -1276,11 +1328,15 @@ function drawAdmin(r){
       <div class="field"><label for="aTpl">متن پیام ${locked?'(بعد از اولین ارسال قفل شد)':'— [نام]، [خدمت] و [نام سالن] پر می‌شوند'}</label><textarea class="inp tpl" id="aTpl" ${locked?'readonly':''}>${esc(p.settings.template)}</textarea></div>
       ${any?`<div class="hint" id="aTplPrev"></div>`:''}
       <button class="btn primary" id="aSave">ذخیره‌ی تنظیمات پایلوت</button></section>`;
-  }else h+=`<p class="small">فایل CSV فهرست را انتخاب کن. ستون‌ها با نامشان شناخته می‌شوند: ${Object.values(PC.COLS).map(esc).join('، ')}.</p>`;
+  }else h+=`<p class="small">فایل اکسل (xlsx) یا CSV فهرست را انتخاب کن. ستون‌ها با نامشان شناخته می‌شوند: ${Object.values(PC.COLS).map(esc).join('، ')}.</p>`;
   r.innerHTML=`<div class="wrap">${panelHead('پایلوت · مدیریت')}<div class="list">${h}</div></div>`;
   // wiring
-  const f=$('aCsv');f&&f.addEventListener('change',()=>{const file=f.files&&f.files[0];if(!file)return;const rd=new FileReader();
-    rd.onload=()=>{importPreview={name:file.name,res:PC.readList(String(rd.result))};drawPanel()};rd.readAsText(file,'utf-8')});
+  const f=$('aCsv');f&&f.addEventListener('change',async()=>{const file=f.files&&f.files[0];if(!file)return;
+    let res;
+    try{const buf=new Uint8Array(await file.arrayBuffer());
+      res=buf[0]===0x50&&buf[1]===0x4B?PC.readListRows(await PC.readXlsx(buf)):PC.readList(new TextDecoder('utf-8').decode(buf))}
+    catch(e){res={people:[],errors:[],dupes:[],missing:[],skippedSample:0,skippedNotes:0,fail:true}}
+    importPreview={name:file.name,res};drawPanel()});
   $('aImpNo')&&$('aImpNo').addEventListener('click',()=>{importPreview=null;drawPanel()});
   $('aImpYes')&&$('aImpYes').addEventListener('click',()=>{
     if(!S.pilot){try{if(!localStorage.getItem(KEY+'-before-pilot'))localStorage.setItem(KEY+'-before-pilot',JSON.stringify(S))}catch(_){}S.pilot=PC.newPilot(todayIso(),Date.now())}

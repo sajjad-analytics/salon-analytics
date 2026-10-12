@@ -396,3 +396,32 @@ test('13. tools/verify_allocation.py reproduces every draw 100%', async t => {
   writeFileSync(dir + '/log2.csv', PC.logCsv(p2));
   assert.throws(() => execFileSync('python3', ['-I', new URL('../tools/verify_allocation.py', import.meta.url).pathname, dir + '/log2.csv'], {stdio: 'pipe'}));
 });
+
+// ---------- 14. Excel file straight from Sajjad's workbook: title rows, sample row, dates as serials ----------
+test('14. .xlsx import: header found below title rows, sample row skipped, dates and numbers read', async () => {
+  const buf = readFileSync(new URL('./fixtures/list-synthetic.xlsx', import.meta.url));
+  const rows = await PC.readXlsx(buf);
+  assert.ok(rows.length >= 9);
+  const r = PC.readListRows(rows);
+  assert.deepEqual(r.missing, []);
+  assert.equal(r.skippedSample, 1, 'the «نمونه» row is not a customer');
+  assert.equal(r.skippedNotes, 2, 'summary rows under the table (a number in the name column) are not customers');
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.people.map(p => p.name), ['مشتری ساختگی یک', 'مشتری ساختگی دو', 'مشتری ساختگی سه', 'مشتری "ویژه" & <چهار>']);
+  const [a, b, c, d] = r.people;
+  assert.deepEqual([a.lastVisit, a.visits, a.lastSvc, a.phone, a.avg], ['2026-08-08', 1, 'ترمیم', '', 450000]);
+  assert.deepEqual([b.lastVisit, b.visits, b.phone, b.phoneSrc, b.future], ['2026-08-22', 4, '09120000002', 'phone', false]);
+  assert.deepEqual([c.lastVisit, c.phone, c.phoneSrc, c.future], ['2026-07-20', '09120000003', 'book', true], 'Gregorian date cell only');
+  assert.deepEqual([d.lastVisit, d.phoneSrc], ['2026-07-21', 'none'], 'Shamsi text only');
+  await assert.rejects(PC.readXlsx(Buffer.from('not a zip at all')));
+});
+
+test('14b. CSV with title rows above the header still works', () => {
+  const csv = 'فهرست موج ۱\n\nتوضیح\n' + CSV_HEAD + '\nنمونه,نام نمونه,1405/05/17,2026-08-08,1,ترمیم,,,,,\n1,نمونه یک,1405/05/17,2026-08-08,1,ترمیم,500000,,,,\n';
+  const r = PC.readList(csv);
+  assert.deepEqual(r.missing, []);
+  assert.equal(r.people.length, 1);
+  assert.equal(r.skippedSample, 1);
+  assert.equal(PC.parseDate('46242'), '', 'a bare number is not a date');
+  assert.equal(PC.excelSerialToIso(46242), '2026-08-08');
+});
