@@ -35,6 +35,9 @@ jobs:
     name: ${{ matrix.browser }} ${{ matrix.width }}px
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Playwright's own image: browsers and their system libraries are already in it, so no apt step can hang
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
     strategy:
       fail-fast: false
       matrix:
@@ -45,11 +48,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-      - name: Playwright + ${{ matrix.browser }}
-        run: |
-          npm install --no-save --no-package-lock playwright@${PLAYWRIGHT_VERSION}
-          # apt on the runner sometimes hangs: cap each try and retry
-          for i in 1 2 3; do timeout 300 npx playwright install --with-deps ${{ matrix.browser }} && break; [ $i = 3 ] && exit 1; echo "install try $i failed"; done
+      - name: Playwright (same version as the browsers in the image)
+        run: npm install --no-save --no-package-lock playwright@${PLAYWRIGHT_VERSION}
       - name: app (tests/e2e.mjs)
         run: node tests/e2e.mjs --browser=${{ matrix.browser }} --width=${{ matrix.width }} --shots
       - name: deployment under /salon-analytics/ (tests/deploy.mjs)
