@@ -72,9 +72,8 @@ test('a workflow checks the live address against docs/', () => {
     assert.ok(w.includes(s), 'live.yml is missing: ' + s);
 });
 
-test('browser tests take a browser and a phone width', () => {
-  for (const f of ['tests/e2e.mjs', 'tests/deploy.mjs']) {
-    const t = read(f);
-    assert.ok(t.includes('--browser') && t.includes('--width') && t.includes('hasTouch'), f);
-  }
+test('browser tests take a browser and a phone width, on a touch screen', () => {
+  const d = read('tests/device.mjs');
+  assert.ok(d.includes('--browser') && d.includes('--width') && d.includes('hasTouch: true') && d.includes('webkit'));
+  for (const f of ['tests/e2e.mjs', 'tests/deploy.mjs']) assert.ok(read(f).includes("from './device.mjs'"), f);
 });

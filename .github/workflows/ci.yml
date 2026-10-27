@@ -1,0 +1,61 @@
+# Every push and pull request: logic tests, preview in sync with the app, and the app in real browsers
+# on phone-sized touch screens (Chromium = Android Chrome, WebKit = Safari on iPhone). Nothing to install locally.
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PLAYWRIGHT_VERSION: 1.63.0
+
+jobs:
+  logic:
+    name: logic tests + preview in sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - run: node --test tests/*.test.mjs
+      - name: docs/preview/ is what tools/build_preview.mjs makes from docs/index.html
+        run: |
+          node tools/build_preview.mjs
+          git diff --exit-code -- docs/preview/ || { echo "::error::docs/preview/ is out of date: run node tools/build_preview.mjs and commit"; exit 1; }
+
+  browser:
+    name: ${{ matrix.browser }} ${{ matrix.width }}px
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+        width: [390, 412]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Playwright + ${{ matrix.browser }}
+        run: |
+          npm install --no-save --no-package-lock playwright@${PLAYWRIGHT_VERSION}
+          npx playwright install --with-deps ${{ matrix.browser }}
+      - name: app (tests/e2e.mjs)
+        run: node tests/e2e.mjs --browser=${{ matrix.browser }} --width=${{ matrix.width }} --shots
+      - name: deployment under /salon-analytics/ (tests/deploy.mjs)
+        if: success() || failure()
+        run: node tests/deploy.mjs --browser=${{ matrix.browser }} --width=${{ matrix.width }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.browser }}-${{ matrix.width }}
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 14

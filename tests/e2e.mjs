@@ -1,20 +1,18 @@
-// End-to-end check of the pilot module in a real browser (Chromium via Playwright), synthetic data only.
-// Run: node tests/e2e.mjs [--shots]     (--shots also writes screenshots/ at 375px, light + dark)
+// End-to-end check of the app in a real browser (Playwright), synthetic data only.
+// Run: node tests/e2e.mjs [--browser=chromium|webkit] [--width=390|412] [--shots]
+//      (a touch phone of that width; --shots also writes screenshots/, light + dark)
 // Checks: old backup loads intact, full flow import → find numbers → lock → draw → send 20 → reply → export,
 // no control name on Mojgan's screens, no request outside the app's own origin, no horizontal scroll.
 import http from 'node:http';
 import {readFileSync, existsSync, mkdirSync, statSync} from 'node:fs';
 import {join, extname, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {execSync} from 'node:child_process';
 import assert from 'node:assert/strict';
+import {engine, phone, label, touch} from './device.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = join(ROOT, 'docs');
 const SHOTS = process.argv.includes('--shots');
-let chromium;
-{ let m; try { m = await import('playwright') } catch { m = await import(join(execSync('npm root -g').toString().trim(), 'playwright', 'index.js')) }
-  chromium = m.chromium || m.default.chromium }
 
 const TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.png': 'image/png', '.json': 'application/json'};
 const server = http.createServer((req, res) => {
@@ -42,11 +40,12 @@ for (let i = 0; i < 60; i++) rows.push([i + 1, 'نمونه ' + fa(String(i + 1).
   i < 52 ? '912000' + String(i).padStart(4, '0') : '', i < 52 ? 'گوشی' : '', '', i % 9 === 0 ? 'اسم دوبار در دفتر' : ''].join(','));
 const CSV = HEAD + '\n' + rows.join('\n') + '\n';
 
-const browser = await chromium.launch();
+const browser = await engine.launch();
+console.log('browser: ' + label);
 const problems = [];
 async function newPage(scheme = 'light') {
-  const ctx = await browser.newContext({viewport: {width: 375, height: 812}, deviceScaleFactor: 2, colorScheme: scheme, serviceWorkers: 'block', acceptDownloads: true, locale: 'fa-IR'});
-  const page = await ctx.newPage();
+  const ctx = await browser.newContext({...phone, colorScheme: scheme, serviceWorkers: 'block', acceptDownloads: true, locale: 'fa-IR'});
+  const page = touch(await ctx.newPage());
   page.on('request', r => { const u = r.url(); if (!u.startsWith(ORIGIN) && !/^(data|blob|sms):/.test(u)) problems.push('external request: ' + u) });
   page.on('pageerror', e => problems.push('page error: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/sms:|Failed to launch|scheme/i.test(m.text())) problems.push('console: ' + m.text()) });
@@ -327,8 +326,8 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
 
 // D. preview copy: own storage key and service worker; the real app's worker never answers for it
 {
-  const ctx = await browser.newContext({viewport: {width: 375, height: 812}, serviceWorkers: 'allow', acceptDownloads: true});
-  const pg = await ctx.newPage();
+  const ctx = await browser.newContext({...phone, serviceWorkers: 'allow', acceptDownloads: true});
+  const pg = touch(await ctx.newPage());
   pg.on('pageerror', e => problems.push('preview page error: ' + e.message));
   pg.on('request', r => { const u = r.url(); if (!u.startsWith(ORIGIN) && !/^(data|blob):/.test(u)) problems.push('external request: ' + u) });
   await pg.goto(ORIGIN + '/');
@@ -367,4 +366,4 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
 await browser.close();
 server.close();
 if (problems.length) { console.error('PROBLEMS:\n' + problems.join('\n')); process.exit(1) }
-console.log('e2e ok' + (SHOTS ? ' (screenshots written to screenshots/)' : ''));
+console.log(`e2e ok (${label})` + (SHOTS ? ' (screenshots written to screenshots/)' : ''));

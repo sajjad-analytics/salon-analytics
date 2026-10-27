@@ -1,0 +1,38 @@
+# The live address, after every GitHub Pages build (and on demand from the Actions tab):
+# every file equals docs/ on this branch, then the same browser checks as tests/deploy.mjs.
+# Runs in fresh test browsers with synthetic data; it never touches anyone's phone.
+name: Live site
+on:
+  page_build:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  PLAYWRIGHT_VERSION: 1.63.0
+  URL: https://sajjad-analytics.github.io/salon-analytics/
+
+jobs:
+  live:
+    name: live ${{ matrix.browser }} ${{ matrix.width }}px
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+        width: [390, 412]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - run: |
+          npm install --no-save --no-package-lock playwright@${PLAYWRIGHT_VERSION}
+          npx playwright install --with-deps ${{ matrix.browser }}
+      - name: tests/deploy.mjs against the live address (waits for the new build to reach the CDN)
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            node tests/deploy.mjs --url=$URL --browser=${{ matrix.browser }} --width=${{ matrix.width }} && exit 0
+            echo "attempt $i failed; waiting 30s"; sleep 30
+          done
+          exit 1
