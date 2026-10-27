@@ -71,6 +71,8 @@ async function shot(page, name) {
 }
 const state = page => page.evaluate(() => window.__daftar.state());
 async function back(page) { await page.click('#pilotRoot [data-pback]'); await page.waitForTimeout(80) }
+// booking form: a time that may not be among today's free slots goes through «ساعت دیگر»
+async function setTime(page, t) { if (await page.isHidden('#fTime')) await page.click('#fTimeOther'); await page.fill('#fTime', t) }
 
 // ---- A. an old (pre-pilot) backup on the phone: everything still there, no pilot trace on the home screen
 {
@@ -289,7 +291,7 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   assert.equal(await pf.isVisible('#pilotRoot'), true);
   await back(); assert.equal(await pf.isVisible('#pilotRoot'), false, 'back closed the pilot page'); assert.equal(pf.url(), url);
   // a booking needs a number or a name; without a mobile number it asks once more
-  await pf.click('#addBtn'); await pf.fill('#fTime', '20:00'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSrc [data-k="direct"]');
+  await pf.click('#addBtn'); await setTime(pf, '20:00'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSrc [data-k="direct"]');
   await pf.click('#fSave'); assert.equal((await state(pf)).bookings.length, 0, 'no number, no name: not saved');
   await pf.fill('#fName', 'آزمون'); await pf.click('#fSave');
   assert.equal((await state(pf)).bookings.length, 0, 'no number: asks first');
@@ -301,8 +303,8 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   await pf.fill('#aAmt', '500000'); await pf.click('#aDone');
   let st = await state(pf); assert.equal(st.bookings[0].status, 'done'); assert.equal(st.bookings[0].amount, 500000);
   // «همه را انجام شد»: uses the default price; a booking with no price stays booked
-  await pf.click('#addBtn'); await pf.fill('#fTime', '19:00'); await pf.fill('#fCust', '09120000009'); await pf.click('#fSvc [data-s="gel"]'); await pf.click('#fSrc [data-k="direct"]'); await pf.fill('#fAmt', ''); await pf.click('#fSave');
-  await pf.click('#addBtn'); await pf.fill('#fTime', '18:00'); await pf.fill('#fCust', '09120000008'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSrc [data-k="direct"]'); await pf.click('#fSave');
+  await pf.click('#addBtn'); await setTime(pf, '19:00'); await pf.fill('#fCust', '09120000009'); await pf.click('#fSvc [data-s="gel"]'); await pf.click('#fSrc [data-k="direct"]'); await pf.fill('#fAmt', ''); await pf.click('#fSave');
+  await pf.click('#addBtn'); await setTime(pf, '18:00'); await pf.fill('#fCust', '09120000008'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSrc [data-k="direct"]'); await pf.click('#fSave');
   await pf.click('#allDone');
   st = await state(pf);
   const by = c => st.bookings.find(b => b.customer === c);
@@ -312,7 +314,7 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   // «از کجا آمد؟» is required: nothing preselected on a new booking; saving is refused and the row is marked until one is chosen
   await pf.click('#addBtn');
   assert.equal(await pf.locator('#fSrc .chip.on').count(), 0, 'no source preselected on a new booking');
-  await pf.fill('#fTime', '17:00'); await pf.fill('#fCust', '09120000007'); await pf.click('#fSvc [data-s="tar"]');
+  await setTime(pf, '17:00'); await pf.fill('#fCust', '09120000007'); await pf.click('#fSvc [data-s="tar"]');
   const before = (await state(pf)).bookings.length;
   await pf.click('#fSave'); assert.equal((await state(pf)).bookings.length, before, 'no source: not saved');
   assert.ok(await pf.evaluate(() => document.getElementById('fSrc').classList.contains('need')), 'source row marked');
@@ -322,6 +324,120 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   st = await state(pf); assert.equal(st.bookings.find(b => b.customer === '09120000007').source, 'insta');
   await noHScroll(pf, 'booking fixes');
   console.log('F ok: back gesture, amounts, booking identity, service times, required source');
+}
+
+// G. short booking form (one screen at 390×844): day, half-hour times, recent customers, referrer list, new service, reschedule
+{
+  const pg = await newPage();
+  await pg.setViewportSize({width: 390, height: 844});
+  await pg.goto(ORIGIN + '/');
+  const tmr = daysAgo(-1), after = daysAgo(-2);
+  await pg.evaluate(([k, d]) => localStorage.setItem(k, JSON.stringify({v: 1, customers: {'09121111111': {name: 'سارا'}}, bookings: [
+    {id: 'a', date: d, time: '10:00', customer: '09121111111', name: 'سارا', services: ['ped'], source: 'mani', ref: 'فاطی', status: 'done', amount: 900000, pct: 65, created: 1},
+    {id: 'b', date: d, time: '12:00', customer: '09122222222', name: '', services: ['gel'], source: 'mani', ref: 'فاطی', status: 'done', amount: 500000, pct: 65, created: 2},
+    {id: 'c', date: d, time: '14:00', customer: '09123333333', name: '', services: ['gel'], source: 'mani', ref: 'مریم', status: 'done', amount: 500000, pct: 65, created: 3}]})), [KEY, daysAgo(10)]);
+  await pg.reload();
+  assert.deepEqual((await state(pg)).settings.refs, ['فاطی', 'مریم'], 'referrers migrated, most used first');
+  await pg.click('#addBtn'); await pg.waitForTimeout(300); // sheet slide-in
+  const box = await pg.locator('#fSave').boundingBox();
+  assert.ok(box && box.y + box.height <= 844, 'save button visible without scrolling: ' + JSON.stringify(box));
+  assert.equal(await pg.isVisible('#fCal'), false, 'calendar folded');
+  await pg.click('#fDayBtn'); await pg.click(`#fCal [data-d="${tmr}"]`);
+  assert.equal(await pg.isVisible('#fCal'), false, 'calendar folds after picking');
+  assert.ok((await pg.textContent('#fDayTxt')).includes('فردا'));
+  assert.equal(await pg.locator('#fTimes [data-t]').count(), 28, 'half-hour times 07:00–20:30 on an empty day');
+  await pg.click('#fTimes [data-t="10:00"]');
+  assert.equal(await pg.inputValue('#fTime'), '10:00');
+  await pg.click('#fRecent [data-c="09121111111"]');
+  assert.equal(await pg.inputValue('#fCust'), '09121111111'); assert.equal(await pg.inputValue('#fName'), 'سارا');
+  assert.equal(await pg.isVisible('#fRecent'), false, 'recent list hides once a number is in');
+  await pg.click('#fSvc [data-s="ped"]');
+  assert.equal(await pg.isVisible('#fRefBox'), false);
+  await pg.click('#fSrc [data-k="mani"]'); await pg.click('#fRefs [data-r="فاطی"]');
+  await pg.click('#fSave');
+  let st = await state(pg); let nb = st.bookings.find(b => b.date === tmr);
+  assert.ok(nb && nb.time === '10:00' && nb.ref === 'فاطی' && nb.customer === '09121111111', 'booked in a few taps');
+  // a new service from the form: saved to settings, selected, its price fills the amount
+  await pg.click('#addBtn'); await pg.click('#fSvcAdd');
+  await pg.fill('#fSvcName', 'لاک'); await pg.fill('#fSvcMin', '20'); await pg.fill('#fSvcPrice', '300000'); await pg.click('#fSvcOk');
+  st = await state(pg); const lak = st.settings.services.find(x => x.label === 'لاک');
+  assert.ok(lak && lak.min === 20 && lak.price === 300000, 'service added to settings');
+  assert.equal(await pg.locator(`#fSvc [data-s="${lak.id}"].on`).count(), 1, 'and selected');
+  assert.equal(await pg.inputValue('#fAmt'), '300000', 'its price fills the amount');
+  // a new referrer typed once joins the list
+  await pg.click('#fSrc [data-k="recep"]'); await pg.click('#fRefAdd'); await pg.fill('#fRef', 'نگار');
+  await setTime(pg, '16:00'); await pg.fill('#fCust', '09124444444'); await pg.click('#fSave');
+  assert.ok((await state(pg)).settings.refs.includes('نگار'), 'new referrer saved to the list');
+  // reschedule keeps where it came from
+  await pg.click('#todayBtn'); await pg.click('#nextDay'); await pg.click(`#list .item[data-id="${nb.id}"]`);
+  await pg.click('#aMove');
+  assert.equal(await pg.isVisible('#fCal'), true, 'reschedule opens the calendar');
+  await pg.click(`#fCal [data-d="${after}"]`); await pg.click('#fTimes [data-t="11:00"]'); await pg.click('#fSave');
+  st = await state(pg); nb = st.bookings.find(b => b.id === nb.id);
+  assert.equal(nb.date, after); assert.equal(nb.time, '11:00'); assert.equal(nb.status, 'booked');
+  assert.deepEqual(nb.moves.map(m => [m.date, m.time]), [[tmr, '10:00']], 'move history kept');
+  assert.ok((await pg.textContent('#list')).includes('جابه‌جا از'), 'shown on the timeline');
+  assert.ok((await pg.evaluate(() => window.__daftar.csv())).split('\n')[0].endsWith('moved_from'));
+  // settings: remove a duplicate referrer
+  await pg.click('#menuBtn'); await pg.click('#mRefs [data-rfdel="1"]'); await pg.click('#mSaveSet');
+  assert.deepEqual((await state(pg)).settings.refs, ['فاطی', 'نگار']);
+  await noHScroll(pg, 'short booking form');
+  await pg.click('#addBtn'); await shot(pg, '11-booking-form');
+  console.log('G ok: one-screen form, half-hour times, recent customers, referrer list, new service, reschedule');
+}
+
+// H. Melika's app: same code, own link, name, services, sources, storage and worker; no pilot menu
+{
+  const ctx = await browser.newContext({...phone, serviceWorkers: 'allow', locale: 'fa-IR'});
+  const pm = touch(await ctx.newPage());
+  pm.on('pageerror', e => problems.push('melika page error: ' + e.message));
+  pm.on('request', r => { const u = r.url(); if (!u.startsWith(ORIGIN) && !/^(data|blob):/.test(u)) problems.push('external request: ' + u) });
+  const settled = async fn => { for (let i = 0; ; i++) { try { return await fn() } catch (e) { if (i > 20 || !/context was destroyed|navigat/i.test(e.message)) throw e; await pm.waitForTimeout(250) } } };
+  await pm.goto(ORIGIN + '/');
+  await pm.evaluate(() => navigator.serviceWorker.ready);
+  const realBefore = await pm.evaluate(() => localStorage.getItem('daftar-mojgan-v1'));
+  await pm.goto(ORIGIN + '/melika/');
+  assert.equal(await settled(() => pm.title()), 'دفتر نوبت ملیکا');
+  let mine = false;
+  for (let i = 0; i < 40 && !mine; i++) {
+    try { mine = await pm.evaluate(() => !!(navigator.serviceWorker.controller && navigator.serviceWorker.controller.scriptURL.includes('/melika/sw.js'))) } catch (_) {}
+    if (!mine) await pm.waitForTimeout(250);
+  }
+  assert.ok(mine, 'Melika page is controlled by its own worker');
+  await pm.waitForTimeout(800); await settled(() => pm.reload());
+  await pm.click('#addBtn');
+  const labels = await pm.locator('#fSvc [data-s]').allTextContents();
+  assert.deepEqual(labels, ['کاشت', 'ترمیم', 'لمینت', 'ژلیش', 'ریموو', 'مانیکور']);
+  assert.deepEqual(await pm.locator('#fSrc [data-k]').allTextContents(), ['مستقیم', 'اینستاگرام', 'معرفی همکار', 'پذیرش سالن']);
+  await pm.click('#fSvc [data-s="kasht"]');
+  assert.equal(await pm.inputValue('#fAmt'), '', 'amount stays empty');
+  assert.equal(await pm.getAttribute('#fAmt', 'placeholder'), '۹۵۰,۰۰۰', 'default price only as a faint hint');
+  await pm.fill('#fAmt', '1100000');
+  await setTime(pm, '20:30'); await pm.fill('#fCust', '09125555555'); await pm.click('#fSrc [data-k="mate"]');
+  assert.equal(await pm.isVisible('#fRefBox'), true, 'معرفی همکار asks who');
+  await pm.click('#fSave');
+  // a booking with no amount: «انجام شد» needs the real one, «همه را انجام شد» leaves it booked
+  await pm.click('#addBtn'); await setTime(pm, '20:00'); await pm.fill('#fCust', '09125555556'); await pm.click('#fSvc [data-s="tarmim"]'); await pm.click('#fSrc [data-k="direct"]'); await pm.click('#fSave');
+  const tid = (await pm.evaluate(() => window.__daftar.state().bookings.find(b => b.customer === '09125555556').id));
+  await pm.click(`#list .item[data-id="${tid}"]`);
+  assert.equal(await pm.inputValue('#aAmt'), ''); assert.equal(await pm.getAttribute('#aAmt', 'placeholder'), '۷۵۰,۰۰۰');
+  await pm.click('#aDone'); await pm.click('[data-close]');
+  await pm.click('#allDone');
+  const mb = await pm.evaluate(() => window.__daftar.state().bookings);
+  assert.equal(mb.find(b => b.id === tid).status, 'booked', 'no amount typed: never done at the list price');
+  assert.equal(mb.find(b => b.customer === '09125555555').status, 'done', 'typed amount: done');
+  await pm.click('#menuBtn');
+  assert.equal(await pm.locator('#mPilot').count(), 0, 'no pilot menu');
+  const ls = await pm.evaluate(() => ({m: JSON.parse(localStorage.getItem('daftar-melika-v1') || '{}'), real: localStorage.getItem('daftar-mojgan-v1')}));
+  assert.equal(ls.m.bookings.length, 2); assert.equal(ls.m.bookings.find(b => b.customer === '09125555555').amount, 1100000); assert.equal(ls.m.settings.sharePct, 65);
+  assert.equal(ls.real, realBefore, 'Mojgan\'s data untouched');
+  assert.ok(!(await pm.content()).includes('مژگان'), 'no «مژگان» anywhere');
+  await pm.goto(ORIGIN + '/');
+  assert.equal(await settled(() => pm.title()), 'دفتر نوبت مژگان', 'the real app still answers its own link');
+  const keys = await pm.evaluate(() => caches.keys());
+  assert.ok(keys.some(k => k.startsWith('daftar-melika-')) && keys.includes(readFileSync(join(DOCS, 'sw.js'), 'utf8').match(/const CACHE = '([^']+)'/)[1]), 'both caches survive: ' + keys);
+  await ctx.close();
+  console.log('H ok: Melika app isolated (link, name, services, sources, storage, worker), no pilot');
 }
 
 // D. preview copy: own storage key and service worker; the real app's worker never answers for it

@@ -16,7 +16,7 @@ env:
 
 jobs:
   logic:
-    name: logic tests + preview in sync
+    name: logic tests + preview and Melika in sync
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -25,10 +25,11 @@ jobs:
         with:
           node-version: lts/*
       - run: node --test tests/*.test.mjs
-      - name: docs/preview/ is what tools/build_preview.mjs makes from docs/index.html
+      - name: docs/preview/ and docs/melika/ are what the tools make from docs/index.html
         run: |
           node tools/build_preview.mjs
-          git diff --exit-code -- docs/preview/ || { echo "::error::docs/preview/ is out of date: run node tools/build_preview.mjs and commit"; exit 1; }
+          node tools/build_melika.mjs
+          git diff --exit-code -- docs/preview/ docs/melika/ || { echo "::error::docs/preview/ or docs/melika/ is out of date: run node tools/build_preview.mjs && node tools/build_melika.mjs and commit"; exit 1; }
 
   browser:
     name: ${{ matrix.browser }} ${{ matrix.width }}px
