@@ -104,7 +104,8 @@ textarea.inp{height:auto;min-height:90px;padding:10px 12px;font-size:13px;direct
 .btn.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line))}
 .btn.wide{width:100%;height:54px;font-size:17px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
-.chips .chip{padding:9px 16px;font-size:15px}
+.chips .chip{padding:9px 16px;font-size:15px;min-height:44px}
+.chips.need .chip{box-shadow:0 0 0 2px var(--bad)}
 .hint{font-size:13px;border-radius:10px;padding:8px 10px;background:var(--pen-soft);color:var(--ink)}
 .hint b{color:var(--pen)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -857,7 +858,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 /* booking form */
 function openForm(opts){
   const b=opts.id?S.bookings.find(x=>x.id===opts.id):null;
-  const f={date:b?b.date:(opts.date||view),time:b?b.time:(opts.time||''),customer:b?b.customer:'',name:b?b.name:'',services:b?[...b.services]:[],source:b?b.source:'direct',ref:b?b.ref||'':'',note:b?b.note||'':''};
+  const f={date:b?b.date:(opts.date||view),time:b?b.time:(opts.time||''),customer:b?b.customer:'',name:b?b.name:'',services:b?[...b.services]:[],source:b?(b.source||''):'',ref:b?b.ref||'':'',note:b?b.note||'':''};
   const refs=[...new Set(S.bookings.map(x=>x.ref).filter(Boolean))];
   const t0=todayIso();
   openSheet(`
@@ -918,7 +919,7 @@ function openForm(opts){
     const guessAmt=()=>{if(amtTouched)return;const g=f.services.reduce((a,id)=>a+((svc(id)||{}).price||0),0);amtIn.value=g||'';showAmt()};
     amtIn.addEventListener('input',()=>{amtTouched=!!amtIn.value;showAmt()});showAmt();
     svcBox.addEventListener('click',()=>setTimeout(guessAmt,0));
-    sh.querySelectorAll('#fSrc .chip').forEach(c=>c.addEventListener('click',()=>{f.source=c.dataset.k;sh.querySelectorAll('#fSrc .chip').forEach(x=>x.classList.toggle('on',x===c));$('fRef').hidden=!(f.source==='mani'||f.source==='recep')}));
+    sh.querySelectorAll('#fSrc .chip').forEach(c=>c.addEventListener('click',()=>{f.source=c.dataset.k;$('fSrc').classList.remove('need');sh.querySelectorAll('#fSrc .chip').forEach(x=>x.classList.toggle('on',x===c));$('fRef').hidden=!(f.source==='mani'||f.source==='recep')}));
     const custIn=$('fCust');
     let autoName='';
     const showHint=()=>{
@@ -949,6 +950,7 @@ function openForm(opts){
       if(!time){toast('ساعت را وارد کن');$('fTime').focus();return}
       if(!f.services.length){toast('خدمت را انتخاب کن');return}
       if(!cust&&!$('fName').value.trim()){toast('شماره یا اسم مشتری را بنویس');custIn.focus();return}
+      if(!f.source){toast('از کجا آمد؟ را انتخاب کن');const sr=$('fSrc');sr.classList.add('need');sr.scrollIntoView({block:'center'});return}
       if(b&&b.status==='done'&&!num(amtIn.value)){toast('این نوبت انجام شده؛ مبلغ فاکتور را بنویس');amtIn.focus();return}
       if(!/^09\d{9}$/.test(cust)&&!noPhoneOk){noPhoneOk=true;$('fSave').textContent='بدون شماره ثبت کن';
         $('fHint').innerHTML=`<div class="hint clash">شماره‌ی موبایل نیست؛ این نوبت به سابقه‌ی پیامک${S.pilot?' و پایلوت':''} وصل نمی‌شود. اگر شماره را نداری، دوباره بزن.</div>`;custIn.focus();return}

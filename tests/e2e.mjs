@@ -266,7 +266,7 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   console.log('E ok: xlsx import');
 }
 
-// F. booking fixes: back gesture closes sheets/pages, done needs an amount, a booking needs a number or name, overlapping service times
+// F. booking fixes: back gesture closes sheets/pages, done needs an amount, a booking needs a number or name, overlapping service times, a source
 {
   const pf = await newPage();
   await pf.goto(ORIGIN + '/');
@@ -290,7 +290,7 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   assert.equal(await pf.isVisible('#pilotRoot'), true);
   await back(); assert.equal(await pf.isVisible('#pilotRoot'), false, 'back closed the pilot page'); assert.equal(pf.url(), url);
   // a booking needs a number or a name; without a mobile number it asks once more
-  await pf.click('#addBtn'); await pf.fill('#fTime', '20:00'); await pf.click('#fSvc [data-s="tar"]');
+  await pf.click('#addBtn'); await pf.fill('#fTime', '20:00'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSrc [data-k="direct"]');
   await pf.click('#fSave'); assert.equal((await state(pf)).bookings.length, 0, 'no number, no name: not saved');
   await pf.fill('#fName', 'آزمون'); await pf.click('#fSave');
   assert.equal((await state(pf)).bookings.length, 0, 'no number: asks first');
@@ -302,16 +302,27 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   await pf.fill('#aAmt', '500000'); await pf.click('#aDone');
   let st = await state(pf); assert.equal(st.bookings[0].status, 'done'); assert.equal(st.bookings[0].amount, 500000);
   // «همه را انجام شد»: uses the default price; a booking with no price stays booked
-  await pf.click('#addBtn'); await pf.fill('#fTime', '19:00'); await pf.fill('#fCust', '09120000009'); await pf.click('#fSvc [data-s="gel"]'); await pf.fill('#fAmt', ''); await pf.click('#fSave');
-  await pf.click('#addBtn'); await pf.fill('#fTime', '18:00'); await pf.fill('#fCust', '09120000008'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSave');
+  await pf.click('#addBtn'); await pf.fill('#fTime', '19:00'); await pf.fill('#fCust', '09120000009'); await pf.click('#fSvc [data-s="gel"]'); await pf.click('#fSrc [data-k="direct"]'); await pf.fill('#fAmt', ''); await pf.click('#fSave');
+  await pf.click('#addBtn'); await pf.fill('#fTime', '18:00'); await pf.fill('#fCust', '09120000008'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSrc [data-k="direct"]'); await pf.click('#fSave');
   await pf.click('#allDone');
   st = await state(pf);
   const by = c => st.bookings.find(b => b.customer === c);
   assert.equal(by('09120000009').status, 'done'); assert.equal(by('09120000009').amount, 600000);
   assert.equal(by('09120000008').status, 'booked', 'no default price: stays booked');
   assert.ok(st.bookings.every(b => b.status !== 'done' || b.amount > 0), 'no done booking without an amount');
+  // «از کجا آمد؟» is required: nothing preselected on a new booking; saving is refused and the row is marked until one is chosen
+  await pf.click('#addBtn');
+  assert.equal(await pf.locator('#fSrc .chip.on').count(), 0, 'no source preselected on a new booking');
+  await pf.fill('#fTime', '17:00'); await pf.fill('#fCust', '09120000007'); await pf.click('#fSvc [data-s="tar"]');
+  const before = (await state(pf)).bookings.length;
+  await pf.click('#fSave'); assert.equal((await state(pf)).bookings.length, before, 'no source: not saved');
+  assert.ok(await pf.evaluate(() => document.getElementById('fSrc').classList.contains('need')), 'source row marked');
+  await pf.click('#fSrc [data-k="insta"]');
+  assert.equal(await pf.evaluate(() => document.getElementById('fSrc').classList.contains('need')), false, 'mark cleared');
+  await pf.click('#fSave');
+  st = await state(pf); assert.equal(st.bookings.find(b => b.customer === '09120000007').source, 'insta');
   await noHScroll(pf, 'booking fixes');
-  console.log('F ok: back gesture, amounts, booking identity, service times');
+  console.log('F ok: back gesture, amounts, booking identity, service times, required source');
 }
 
 // D. preview copy: own storage key and service worker; the real app's worker never answers for it
