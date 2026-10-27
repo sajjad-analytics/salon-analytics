@@ -1,0 +1,64 @@
+# Every push and pull request: logic tests, preview in sync with the app, and the app in real browsers
+# on phone-sized touch screens (Chromium = Android Chrome, WebKit = Safari on iPhone). Nothing to install locally.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PLAYWRIGHT_VERSION: 1.63.0
+
+jobs:
+  logic:
+    name: logic tests + preview and Melika in sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - run: node --test tests/*.test.mjs
+      - name: docs/preview/ and docs/melika/ are what the tools make from docs/index.html
+        run: |
+          node tools/build_preview.mjs
+          node tools/build_melika.mjs
+          git diff --exit-code -- docs/preview/ docs/melika/ || { echo "::error::docs/preview/ or docs/melika/ is out of date: run node tools/build_preview.mjs && node tools/build_melika.mjs and commit"; exit 1; }
+
+  browser:
+    name: ${{ matrix.browser }} ${{ matrix.width }}px
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Playwright's own image: browsers and their system libraries are already in it, so no apt step can hang
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+        width: [390, 412]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Playwright (same version as the browsers in the image)
+        run: npm install --no-save --no-package-lock playwright@${PLAYWRIGHT_VERSION}
+      - name: app (tests/e2e.mjs)
+        run: node tests/e2e.mjs --browser=${{ matrix.browser }} --width=${{ matrix.width }} --shots
+      - name: deployment under /salon-analytics/ (tests/deploy.mjs)
+        if: success() || failure()
+        run: node tests/deploy.mjs --browser=${{ matrix.browser }} --width=${{ matrix.width }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.browser }}-${{ matrix.width }}
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 14

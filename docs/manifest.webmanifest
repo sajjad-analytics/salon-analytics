@@ -1,0 +1,18 @@
+{
+  "name": "دفتر نوبت مژگان",
+  "short_name": "دفتر نوبت",
+  "description": "نوبت‌ها، مشتری‌ها و درآمد روز، به‌جای دفتر کاغذی",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAF7F9",
+  "theme_color": "#B3126C",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

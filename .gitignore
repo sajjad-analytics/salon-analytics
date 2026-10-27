@@ -1,0 +1,10 @@
+# Customer data never goes into this public repo: backups, exports and lists stay on the phone.
+# (synthetic test files live in tests/fixtures/ and are added explicitly)
+daftar-*.json
+daftar-*.csv
+pilot-*.csv
+*.xlsx
+*.xls
+*.csv
+!tests/fixtures/*
+node_modules/
