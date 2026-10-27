@@ -671,6 +671,8 @@ const FA='۰۱۲۳۴۵۶۷۸۹';
 const SOURCES=[['direct','مستقیم'],['insta','اینستاگرام'],['mani','مانیکوریست'],['recep','پذیرش سالن']];
 const refSource=k=>!!k&&k!=='direct'&&k!=='insta'; // these sources ask «کدام همکار؟»
 const PILOT_ON=true; // the SMS pilot's menu entries (off in builds for other users)
+const AMOUNT_PREFILL=true; // false: the amount box stays empty and the default price only shows faintly inside it
+const priceOf=ids=>(ids||[]).reduce((a,s)=>a+((svc(s)||{}).price||0),0);
 const STATUS={booked:'رزرو',done:'انجام شد',cancel:'لغو',noshow:'نیامد'};
 const DEF_SETTINGS={services:[
   {id:'gel',label:'ژل پا',min:30,price:0},
@@ -840,9 +842,9 @@ function renderDayList(){
   list.innerHTML=html;
   // every booking gets its saved amount or the services' default price; one with neither stays «رزرو»
   const ad=$('allDone');if(ad)ad.addEventListener('click',e=>{e.stopPropagation();let left=0;
-    day.filter(b=>b.status==='booked').forEach(b=>{const v=b.amount||(b.services||[]).reduce((a,s)=>a+((svc(s)||{}).price||0),0);
+    day.filter(b=>b.status==='booked').forEach(b=>{const v=b.amount||(AMOUNT_PREFILL?priceOf(b.services):0);
       if(!v){left++;return}Object.assign(b,{status:'done',amount:v,pct:b.pct!=null?b.pct:curPct(),updated:Date.now()})});
-    save();render();toast(left?`${fa(left)} نوبت قیمت پیش‌فرض ندارد؛ تک‌تک با مبلغ ثبت کن`:'همه ثبت شد')});
+    save();render();toast(left?`${fa(left)} نوبت ${AMOUNT_PREFILL?'قیمت پیش‌فرض':'مبلغ'} ندارد؛ تک‌تک با مبلغ ثبت کن`:'همه ثبت شد')});
 }
 function gapHtml(a,b){
   return `<button class="gapitem" data-gap="${fromMin(a)}"><span>خالی · <b>${faTime(fromMin(a))}</b> تا <b>${faTime(fromMin(b))}</b> · ${fa(b-a)} دقیقه</span><span class="plus">+ ثبت</span></button>`;
@@ -961,7 +963,7 @@ function openForm(opts){
     syncDur();
     const amtIn=$('fAmt');let amtTouched=!!amtIn.value;
     const showAmt=()=>{const v=num(amtIn.value);$('fAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>${v<10000?'<span class="clash">مبلغ خیلی کم است؛ کل مبلغ را به تومان بنویس.</span>':''}`:''};
-    const guessAmt=()=>{if(amtTouched)return;const g=f.services.reduce((a,id)=>a+((svc(id)||{}).price||0),0);amtIn.value=g||'';showAmt()};
+    const guessAmt=()=>{const g=priceOf(f.services);if(!AMOUNT_PREFILL){amtIn.placeholder=g?money(g):'مثلاً 950000';return}if(amtTouched)return;amtIn.value=g||'';showAmt()};
     amtIn.addEventListener('input',()=>{amtTouched=!!amtIn.value;showAmt()});showAmt();
     svcBox.addEventListener('click',e=>{
       if(e.target.closest('#fSvcAdd')){const r=$('fSvcNew');r.hidden=!r.hidden;if(!r.hidden)$('fSvcName').focus();return}
@@ -1046,7 +1048,7 @@ function openActions(id){
     <div class="who">${esc(b.name||c.name||'بدون اسم')} ${b.customer?`<span class="ph">${isPhone?fa(b.customer):esc(b.customer)}</span>`:''}</div>
     ${isPhone?`<div class="grid2"><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="tel:${b.customer}">تماس</a><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="sms:${b.customer}">پیامک</a></div>`:''}
     <div class="field"><label for="aAmt">مبلغ فاکتور (تومان، کل مبلغ)</label>
-      <div class="hstack"><input class="inp ltr" id="aAmt" inputmode="numeric" placeholder="مثلاً 850000" value="${priceGuess}"><button class="btn ok" id="aDone">انجام شد ✓</button></div>
+      <div class="hstack"><input class="inp ltr" id="aAmt" inputmode="numeric" placeholder="${!AMOUNT_PREFILL&&priceOf(b.services)?money(priceOf(b.services)):'مثلاً 850000'}" value="${AMOUNT_PREFILL?priceGuess:b.amount||''}"><button class="btn ok" id="aDone">انجام شد ✓</button></div>
       <div class="money" id="aAmtFa"></div></div>
     <div class="grid2"><button class="btn bad" id="aCancel">لغو شد</button><button class="btn bad" id="aNoshow">نیامد</button></div>
     ${b.status==='booked'?'<button class="btn" id="aMove">جابه‌جا شد (روز یا ساعت دیگر)</button>':'<button class="btn" id="aReset">برگرداندن به «رزرو»</button>'}
