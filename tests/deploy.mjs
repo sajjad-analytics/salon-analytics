@@ -11,7 +11,7 @@ import {readFileSync, existsSync, statSync} from 'node:fs';
 import {join, dirname, extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
-import {engine, phone, label, touch} from './device.mjs';
+import {engine, phone, label, touch, BROWSER} from './device.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = join(ROOT, 'docs');
@@ -98,15 +98,18 @@ await page.reload();
 sameBookings(await state(), 'restored file after reload');
 console.log('2 ok: old backup file restored completely');
 
-// 3. no network: the installed app still opens with its data
-await ctx.setOffline(true);
-await page.reload();
-assert.equal(await page.title(), 'دفتر نوبت مژگان');
-sameBookings(await state(), 'offline');
-await ctx.setOffline(false);
-console.log('3 ok: opens offline');
+// 3. no network: the installed app still opens with its data.
+// Locally the server itself is stopped (works the same on every engine); on the live site Chromium's offline mode is
+// used, because WebKit's offline emulation fails navigations before the service worker can answer them.
+if (server) { server.close(); server.closeAllConnections() }
+else if (BROWSER === 'chromium') await ctx.setOffline(true);
+if (server || BROWSER === 'chromium') {
+  await page.reload();
+  assert.equal(await page.title(), 'دفتر نوبت مژگان');
+  sameBookings(await state(), 'offline');
+  console.log('3 ok: opens offline');
+} else console.log('3 skipped: offline on the live site is checked with chromium');
 
 await browser.close();
-if (server) server.close();
 if (problems.length) { console.error('PROBLEMS:\n' + problems.join('\n')); process.exit(1) }
 console.log(`deploy ok (${label})`);
