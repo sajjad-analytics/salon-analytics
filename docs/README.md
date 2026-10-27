@@ -16,3 +16,11 @@
 - **قرعه:** mulberry32(seed) + Fisher–Yates روی فهرست مرتب واجدان؛ شرح کامل بالای بخش `PILOT-CORE` در `index.html`. بازتولید با پایتون: `python3 tools/verify_allocation.py pilot-log.csv pilot.csv`.
 - **پیش‌نمایش:** `preview/` کپی ساخته‌شده با `node tools/build_preview.mjs` است، با کلید ذخیره‌ی `daftar-preview` و service worker و manifest جدا. دستی ویرایش نشود.
 - **تست‌ها:** `node --test tests/*.test.mjs` (منطق) و `node tests/e2e.mjs --shots` (مرورگر واقعی، اسکرین‌شات در `screenshots/`).
+
+## دفتر نوبت ملیکا (`melika/`)
+
+همین اپ با تنظیمات ملیکا، با لینک، اسم روی صفحه‌ی آیفون، کلید ذخیره (`daftar-melika-v1`) و service worker جدا. منوی پایلوت ندارد.
+
+- **کد یکی است:** فقط `index.html` ویرایش شود، بعد `node tools/build_melika.mjs` (و `node tools/build_preview.mjs`). `melika/` دستی ویرایش نشود.
+- خدمت‌ها، قیمت‌ها و منبع‌ها («معرفی همکار» به‌جای «مانیکوریست») بالای `tools/build_melika.mjs` هستند. مدت خدمت‌ها حدس اول است؛ ملیکا از ☰ عوضشان می‌کند.
+- روی آیفون باید از Safari با Share ← Add to Home Screen نصب شود؛ اپ همین را یک بار نشان می‌دهد.

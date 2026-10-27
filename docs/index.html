@@ -111,7 +111,26 @@ textarea.inp{height:auto;min-height:90px;padding:10px 12px;font-size:13px;direct
 .sect{border-top:1px solid var(--line);padding-top:14px;display:flex;flex-direction:column;gap:10px}
 .sect h3{margin:0;font-size:15px}
 .svcrow{display:grid;grid-template-columns:1fr 54px 54px 96px;gap:6px}
-.svcrow .inp{height:42px;font-size:15px}
+.svcrow .inp{height:42px;font-size:16px}
+/* booking form: one screen, save button always visible */
+.sheet.form{padding-bottom:0}
+.savebar{position:sticky;bottom:0;z-index:1;margin:0 -16px;padding:10px 16px calc(12px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line)}
+.dayline{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.dayline b{font-size:16px}
+.linkbtn{border:none;background:none;color:var(--pen);font-weight:700;font-size:14px;min-height:44px;padding:0 4px;white-space:nowrap}
+.hscroll{display:flex;gap:6px;align-items:center;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.hscroll::-webkit-scrollbar{display:none}
+.hscroll>*{flex:none}
+.hscroll .chip{min-height:40px;padding:6px 14px;font-size:15px}
+.tchip{min-width:62px;height:44px;border:1px solid var(--line);background:var(--surface);border-radius:10px;font-weight:700;font-size:16px;font-variant-numeric:tabular-nums}
+.tchip.on{background:var(--pen);border-color:var(--pen);color:var(--on-pen)}
+.tchip.other{font-weight:500;font-size:14px;color:var(--muted);padding:0 10px}
+.chip.add{border-style:dashed;color:var(--pen)}
+.newrow{display:flex;flex-direction:column;gap:6px}
+.newrow .inp{height:44px}
+#fRefBox{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+#fRefBox[hidden]{display:none}
+textarea.inp.note{direction:rtl;text-align:right;font-size:16px;min-height:64px}
 .small{font-size:12px;color:var(--muted)}
 .toast{position:fixed;bottom:calc(84px + env(safe-area-inset-bottom,0px));inset-inline:16px;margin:0 auto;max-width:400px;background:var(--ink);color:var(--paper);border-radius:12px;padding:10px 14px;text-align:center;z-index:30;font-size:15px}
 .warnbar{background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:8px 10px;font-size:13px;margin-top:10px}
@@ -625,13 +644,15 @@ return {latin,normCustomer,normPhone,normName,daysBetween,addDaysIso,jalaliToIso
 const KEY='daftar-mojgan-v1';
 const FA='۰۱۲۳۴۵۶۷۸۹';
 const SOURCES=[['direct','مستقیم'],['insta','اینستاگرام'],['mani','مانیکوریست'],['recep','پذیرش سالن']];
+const refSource=k=>!!k&&k!=='direct'&&k!=='insta'; // these sources ask «کدام همکار؟»
+const PILOT_ON=true; // the SMS pilot's menu entries (off in builds for other users)
 const STATUS={booked:'رزرو',done:'انجام شد',cancel:'لغو',noshow:'نیامد'};
 const DEF_SETTINGS={services:[
   {id:'gel',label:'ژل پا',min:30,price:0},
   {id:'ped',label:'پدیکور',min:40,price:0},
   {id:'tar',label:'ترمیم',min:30,price:0},
   {id:'pla',label:'پلاژن',min:60,over:20,price:0}],
-  dayStart:'07:00',dayEnd:'21:00',sharePct:65};
+  refs:[],dayStart:'07:00',dayEnd:'21:00',sharePct:65};
 
 /* ---------- helpers ---------- */
 const fa=s=>String(s).replace(/\d/g,d=>FA[d]);
@@ -679,6 +700,9 @@ if(!S.settings.hoursV){if(S.settings.dayStart==='09:00')S.settings.dayStart='07:
 if(!S.settings.svcV){const g=id=>S.settings.services.find(x=>x.id===id),ped=g('ped'),pla=g('pla');
   if(ped&&ped.min===60)ped.min=40;if(pla&&pla.min===90){pla.min=60;pla.over=20}
   S.settings.svcV=3;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(_){}}
+// migration: referrers become a fixed list, most used first (duplicates can be removed in settings)
+if(!S.settings.refsV){const n={};S.bookings.forEach(b=>{if(b.ref)n[b.ref]=(n[b.ref]||0)+1});
+  S.settings.refs=[...new Set([...(S.settings.refs||[]),...Object.keys(n).sort((a,b)=>n[b]-n[a])])];S.settings.refsV=1;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(_){}}
 // migration: lock the share % on bookings that already have an amount
 S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=curPct()});
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
@@ -809,14 +833,14 @@ function itemHtml(b,clash){
     <div class="body">
       <div class="line1">${(b.services||[]).map(id=>`<span class="svc">${esc(svcLabel(id))}</span>`).join('')}<span class="pill">${STATUS[b.status]}</span>${b.sample?'<span class="sampletag">نمونه</span>':''}${pilotMap&&PC.badgeFor(S.pilot,b,pilotMap)?'<span class="pilottag">پایلوت</span>':''}</div>
       <div class="who">${name?esc(name)+' ':''}${custTxt}</div>
-      <div class="meta">${h.length?`<span>${fa(h.length)} مراجعه‌ی قبلی</span>`:(b.customer?'<span class="new">مشتری جدید</span>':'')}${src&&b.source!=='direct'?`<span>از: ${src[1]}${b.ref?' ('+esc(b.ref)+')':''}</span>`:''}${b.amount&&active(b)?`<span>فاکتور ${money(b.amount)} · سهم من ${money(shareOf(b))}</span>`:''}${clash?'<span class="clash">تداخل زمانی</span>':''}${b.note?`<span>${esc(b.note)}</span>`:''}</div>
+      <div class="meta">${h.length?`<span>${fa(h.length)} مراجعه‌ی قبلی</span>`:(b.customer?'<span class="new">مشتری جدید</span>':'')}${src&&b.source!=='direct'?`<span>از: ${src[1]}${b.ref?' ('+esc(b.ref)+')':''}</span>`:''}${b.amount&&active(b)?`<span>فاکتور ${money(b.amount)} · سهم من ${money(shareOf(b))}</span>`:''}${b.moves&&b.moves.length?`<span>جابه‌جا از ${faDay(b.moves[0].date).short} ${faTime(b.moves[0].time)}</span>`:''}${clash?'<span class="clash">تداخل زمانی</span>':''}${b.note?`<span>${esc(b.note)}</span>`:''}</div>
     </div></button>`;
 }
 
 /* ---------- sheets ---------- */
-function openSheet(html,onMount){
+function openSheet(html,onMount,cls){
   const root=$('sheetRoot');if(!root.innerHTML)navPush({sheet:1});
-  root.innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+  root.innerHTML=`<div class="scrim" id="scrim"><div class="sheet${cls?' '+cls:''}" role="dialog" aria-modal="true">${html}</div></div>`;
   $('scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closeSheet()});
   root.querySelectorAll('[data-close]').forEach(x=>x.addEventListener('click',closeSheet));
   onMount&&onMount(root.querySelector('.sheet'));
@@ -834,71 +858,112 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 function openForm(opts){
   const b=opts.id?S.bookings.find(x=>x.id===opts.id):null;
   const f={date:b?b.date:(opts.date||view),time:b?b.time:(opts.time||''),customer:b?b.customer:'',name:b?b.name:'',services:b?[...b.services]:[],source:b?(b.source||''):'',ref:b?b.ref||'':'',note:b?b.note||'':''};
-  const refs=[...new Set(S.bookings.map(x=>x.ref).filter(Boolean))];
-  const t0=todayIso();
+  const t0=todayIso(), move=!!opts.move;
+  // recent customers: one tap instead of typing 11 digits
+  const recent=[];if(!b){const seen=new Set();[...S.bookings].sort((x,y)=>(y.date+y.time).localeCompare(x.date+x.time)).forEach(x=>{
+    if(x.customer&&!seen.has(x.customer)&&recent.length<10){seen.add(x.customer);recent.push(x.customer)}})}
+  const custLabel=c=>{const n=(S.customers[c]||{}).name;return n?n:c.startsWith('@')?c:'…'+fa(c.slice(-4))};
+  const refChips=()=>{const l=[...(S.settings.refs||[])];if(f.ref&&!l.includes(f.ref))l.unshift(f.ref);
+    return l.map(r=>`<button type="button" class="chip${r===f.ref?' on':''}" data-r="${esc(r)}">${esc(r)}</button>`).join('')+`<button type="button" class="chip add" id="fRefAdd">+ اسم جدید</button>`};
+  const svcChip=s=>`<button type="button" class="chip${f.services.includes(s.id)?' on':''}" data-s="${s.id}">${esc(s.label)}</button>`;
   openSheet(`
-    <div class="sheethead"><h2>${b?'ویرایش نوبت':'نوبت جدید'}</h2><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
-    <div class="field"><span class="flabel">روز</span>
+    <div class="sheethead"><h2>${move?'جابه‌جایی نوبت':b?'ویرایش نوبت':'نوبت جدید'}</h2><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
+    <div class="field">
       <input type="hidden" id="fDate" value="${f.date}">
-      <div class="cal" id="fCal"></div>
-      <span class="hint" id="fDateFa"></span>
+      <div class="dayline"><span><span class="flabel">روز </span><b id="fDayTxt"></b></span><button type="button" class="linkbtn" id="fDayBtn" aria-expanded="false">تغییر روز</button></div>
+      <div class="cal" id="fCal" hidden></div>
     </div>
-    <div class="field"><label for="fTime">ساعت</label>
-      <div class="frees" id="fFrees"></div>
-      <input type="time" class="inp ltr" id="fTime" step="900" value="${f.time}"></div>
-    <div class="field"><label for="fCust">شماره موبایل یا آیدی اینستاگرام</label>
-      <div class="hstack"><input class="inp ltr" id="fCust" inputmode="tel" autocomplete="off" placeholder="09xx xxx xxxx" value="${esc(f.customer)}"><button class="btn" id="fPaste">چسباندن</button></div>
+    <div class="field"><span class="flabel">ساعت</span>
+      <div class="hscroll" id="fTimes"></div>
+      <input type="time" class="inp ltr" id="fTime" step="300" value="${f.time}" hidden aria-label="ساعت دیگر">
+    </div>
+    <div class="field"><label for="fCust">شماره موبایل</label>
+      <div class="hstack"><input class="inp ltr" id="fCust" inputmode="tel" autocomplete="off" placeholder="09xx xxx xxxx" value="${esc(f.customer)}"><button type="button" class="btn" id="fPaste">چسباندن</button></div>
+      ${recent.length?`<div class="hscroll" id="fRecent"><span class="small">اخیر:</span>${recent.map(c=>`<button type="button" class="chip" data-c="${esc(c)}">${esc(custLabel(c))}</button>`).join('')}</div>`:''}
       <div id="fHint"></div>
     </div>
     <div class="field"><label for="fName">اسم</label><input class="inp" id="fName" autocomplete="off" value="${esc(f.name)}"></div>
     <div class="field"><span class="flabel">خدمت</span>
-      <div class="chips" id="fSvc">${S.settings.services.map(s=>`<button class="chip${f.services.includes(s.id)?' on':''}" data-s="${s.id}">${esc(s.label)}</button>`).join('')}</div>
+      <div class="chips" id="fSvc">${S.settings.services.map(svcChip).join('')}<button type="button" class="chip add" id="fSvcAdd">+ خدمت</button></div>
+      <div class="newrow" id="fSvcNew" hidden><input class="inp" id="fSvcName" placeholder="اسم خدمت" autocomplete="off">
+        <div class="hstack"><input class="inp ltr" id="fSvcMin" inputmode="numeric" placeholder="دقیقه"><input class="inp ltr" id="fSvcPrice" inputmode="numeric" placeholder="قیمت (تومان)"><button type="button" class="btn" id="fSvcOk">افزودن</button></div></div>
       <span class="small" id="fDur"></span>
     </div>
     <div class="field"><span class="flabel">از کجا آمد؟</span>
-      <div class="chips" id="fSrc">${SOURCES.map(([k,l])=>`<button class="chip${f.source===k?' on':''}" data-k="${k}">${l}</button>`).join('')}</div>
-      <input class="inp" id="fRef" list="refList" placeholder="اسم مانیکوریست یا همکار" value="${esc(f.ref)}" ${f.source==='mani'||f.source==='recep'?'':'hidden'}>
-      <datalist id="refList">${refs.map(r=>`<option value="${esc(r)}">`).join('')}</datalist>
+      <div class="chips" id="fSrc">${SOURCES.map(([k,l])=>`<button type="button" class="chip${f.source===k?' on':''}" data-k="${k}">${l}</button>`).join('')}</div>
+      <div id="fRefBox" ${refSource(f.source)?'':'hidden'}><span class="flabel">کدام همکار؟</span>
+        <div class="chips" id="fRefs">${refChips()}</div>
+        <input class="inp" id="fRef" placeholder="اسم همکار" autocomplete="off" hidden></div>
     </div>
-    <div class="field"><label for="fAmt">مبلغ فاکتور (تومان، کل مبلغ)</label><input class="inp ltr" id="fAmt" inputmode="numeric" autocomplete="off" placeholder="مثلاً 1250000" value="${b&&b.amount?b.amount:''}">
+    <div class="field"><label for="fAmt">مبلغ فاکتور (تومان، کل مبلغ)</label><input class="inp ltr" id="fAmt" inputmode="numeric" autocomplete="off" placeholder="مثلاً 950000" value="${b&&b.amount?b.amount:''}">
       <div class="money" id="fAmtFa"></div></div>
-    <button class="btn primary wide" id="fSave">${b?'ذخیره‌ی تغییرات':'ثبت نوبت'}</button>
+    <details class="more"${f.note?' open':''}><summary>یادداشت</summary><textarea class="inp note" id="fNote" rows="2">${esc(f.note)}</textarea></details>
+    <div class="savebar"><button class="btn primary wide" id="fSave">${move?'ثبت جابه‌جایی':b?'ذخیره‌ی تغییرات':'ثبت نوبت'}</button></div>
   `,sh=>{
-    const dateIn=$('fDate');
+    const dateIn=$('fDate'), timeIn=$('fTime'), cal=$('fCal');
     let calStart=satOf(dateIn.value);
     const drawCal=()=>{
       const days=[...Array(21)].map((_,i)=>addDays(calStart,i));
       const m1=faPart(days[0],{month:'long'}), m2=faPart(days[20],{month:'long'}), y=faPart(days[20],{year:'numeric'});
       const cells=days.map(iso=>{const n=dayBookings(iso).filter(x=>active(x)&&(!b||x.id!==b.id)).length;
-        return `<button class="cday${iso<t0?' past':''}${iso===t0?' today':''}${iso===dateIn.value?' on':''}" data-d="${iso}" aria-label="${esc(faDay(iso).wd+' '+faDay(iso).dt)}"><span class="n">${faPart(iso,{day:'numeric'})}</span><span class="c">${iso===t0?'امروز':n?fa(n)+' نوبت':''}</span></button>`}).join('');
-      $('fCal').innerHTML=`<div class="calnav"><button type="button" data-cal="-21">→ قبلی</button><b>${m1===m2?m1:m1+' – '+m2} ${y}</b><button type="button" data-cal="21">بعدی ←</button></div>
+        return `<button type="button" class="cday${iso<t0?' past':''}${iso===t0?' today':''}${iso===dateIn.value?' on':''}" data-d="${iso}" aria-label="${esc(faDay(iso).wd+' '+faDay(iso).dt)}"><span class="n">${faPart(iso,{day:'numeric'})}</span><span class="c">${iso===t0?'امروز':n?fa(n)+' نوبت':''}</span></button>`}).join('');
+      cal.innerHTML=`<div class="calnav"><button type="button" data-cal="-21">→ قبلی</button><b>${m1===m2?m1:m1+' – '+m2} ${y}</b><button type="button" data-cal="21">بعدی ←</button></div>
         <div class="calgrid">${['ش','ی','د','س','چ','پ','ج'].map(w=>`<span class="wdh">${w}</span>`).join('')}${cells}</div>`;
     };
-    const syncDays=()=>{
-      drawCal();const d=faDay(dateIn.value);$('fDateFa').textContent=d.wd+' '+d.dt;
-      const gaps=gapsFor(dateIn.value,b&&b.id);
-      $('fFrees').innerHTML=gaps.length?'<span>خالی:</span>'+gaps.map(([x,y])=>`<button type="button" class="freechip" data-t="${fromMin(x)}">${faTime(fromMin(x))} تا ${faTime(fromMin(y))}</button>`).join(''):'<span class="full">این روز پر است</span>';
+    const showCal=on=>{cal.hidden=!on;$('fDayBtn').setAttribute('aria-expanded',on);$('fDayBtn').textContent=on?'بستن تقویم':'تغییر روز';if(on)drawCal()};
+    // start times every half hour inside the day's free gaps (and the gap's own start)
+    const drawTimes=()=>{
+      const ts=[];gapsFor(dateIn.value,b&&b.id).forEach(([x,y])=>{for(let t=x;t<y;t=Math.floor(t/30)*30+30)ts.push(fromMin(t))});
+      if(timeIn.value&&!ts.includes(timeIn.value)){ts.push(timeIn.value);ts.sort()}
+      $('fTimes').innerHTML=(ts.length?'':'<span class="full">این روز جای خالی ندارد</span>')+ts.map(t=>`<button type="button" class="tchip${t===timeIn.value?' on':''}" data-t="${t}">${faTime(t)}</button>`).join('')+
+        `<button type="button" class="tchip other" id="fTimeOther">ساعت دیگر</button>`;
+      const on=$('fTimes').querySelector('.on');if(on)$('fTimes').scrollLeft+=on.getBoundingClientRect().left-$('fTimes').getBoundingClientRect().left-8;
     };
-    $('fCal').addEventListener('click',e=>{
-      const c=e.target.closest('[data-d]');if(c){dateIn.value=c.dataset.d;syncDays();return}
+    const syncDay=()=>{const d=faDay(dateIn.value);$('fDayTxt').textContent=d.wd+' '+d.short+(dateIn.value===t0?' · امروز':dateIn.value===addDays(t0,1)?' · فردا':'');drawTimes()};
+    $('fDayBtn').addEventListener('click',()=>showCal(cal.hidden));
+    cal.addEventListener('click',e=>{
+      const c=e.target.closest('[data-d]');if(c){dateIn.value=c.dataset.d;showCal(false);syncDay();return}
       const n=e.target.closest('[data-cal]');if(n){calStart=addDays(calStart,Number(n.dataset.cal));drawCal()}
     });
-    $('fFrees').addEventListener('click',e=>{const c=e.target.closest('[data-t]');if(c){$('fTime').value=c.dataset.t;toast('ساعت '+fa(c.dataset.t)+' انتخاب شد')}});
-    syncDays();
+    $('fTimes').addEventListener('click',e=>{
+      if(e.target.closest('#fTimeOther')){timeIn.hidden=false;timeIn.focus();return}
+      const c=e.target.closest('[data-t]');if(!c)return;timeIn.value=c.dataset.t;$('fTimes').querySelectorAll('[data-t]').forEach(x=>x.classList.toggle('on',x===c));
+    });
+    timeIn.addEventListener('change',()=>$('fTimes').querySelectorAll('[data-t]').forEach(x=>x.classList.toggle('on',x.dataset.t===timeIn.value)));
+    syncDay();if(move)showCal(true);
     const svcBox=$('fSvc');
     const syncDur=()=>{const m=durOf(f.services);$('fDur').textContent=m?`مدت: ${fa(m)} دقیقه`:'یک یا چند خدمت را انتخاب کن'};
-    svcBox.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{const id=c.dataset.s;const i=f.services.indexOf(id);i>=0?f.services.splice(i,1):f.services.push(id);c.classList.toggle('on',i<0);syncDur()}));
     syncDur();
     const amtIn=$('fAmt');let amtTouched=!!amtIn.value;
     const showAmt=()=>{const v=num(amtIn.value);$('fAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${pct()}): <b>${money(myShare(v))}</b></span>${v<10000?'<span class="clash">مبلغ خیلی کم است؛ کل مبلغ را به تومان بنویس.</span>':''}`:''};
     const guessAmt=()=>{if(amtTouched)return;const g=f.services.reduce((a,id)=>a+((svc(id)||{}).price||0),0);amtIn.value=g||'';showAmt()};
     amtIn.addEventListener('input',()=>{amtTouched=!!amtIn.value;showAmt()});showAmt();
-    svcBox.addEventListener('click',()=>setTimeout(guessAmt,0));
-    sh.querySelectorAll('#fSrc .chip').forEach(c=>c.addEventListener('click',()=>{f.source=c.dataset.k;$('fSrc').classList.remove('need');sh.querySelectorAll('#fSrc .chip').forEach(x=>x.classList.toggle('on',x===c));$('fRef').hidden=!(f.source==='mani'||f.source==='recep')}));
+    svcBox.addEventListener('click',e=>{
+      if(e.target.closest('#fSvcAdd')){const r=$('fSvcNew');r.hidden=!r.hidden;if(!r.hidden)$('fSvcName').focus();return}
+      const c=e.target.closest('[data-s]');if(!c)return;
+      const id=c.dataset.s,i=f.services.indexOf(id);i>=0?f.services.splice(i,1):f.services.push(id);c.classList.toggle('on',i<0);syncDur();guessAmt();
+    });
+    $('fSvcOk').addEventListener('click',()=>{
+      const label=$('fSvcName').value.trim();if(!label){toast('اسم خدمت را بنویس');$('fSvcName').focus();return}
+      const s={id:'s'+uid(),label,min:num($('fSvcMin').value)||30,price:num($('fSvcPrice').value)};
+      S.settings.services.push(s);save();f.services.push(s.id);
+      $('fSvcAdd').insertAdjacentHTML('beforebegin',svcChip(s));$('fSvcNew').hidden=true;['fSvcName','fSvcMin','fSvcPrice'].forEach(k=>$(k).value='');
+      syncDur();guessAmt();toast('خدمت «'+label+'» اضافه شد');
+    });
+    const refBox=$('fRefBox'), refIn=$('fRef');
+    $('fSrc').addEventListener('click',e=>{const c=e.target.closest('[data-k]');if(!c)return;
+      f.source=c.dataset.k;$('fSrc').classList.remove('need');$('fSrc').querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));refBox.hidden=!refSource(f.source)});
+    $('fRefs').addEventListener('click',e=>{
+      if(e.target.closest('#fRefAdd')){refIn.hidden=false;refIn.focus();return}
+      const c=e.target.closest('[data-r]');if(!c)return;f.ref=f.ref===c.dataset.r?'':c.dataset.r;refIn.hidden=true;refIn.value='';
+      $('fRefs').querySelectorAll('[data-r]').forEach(x=>x.classList.toggle('on',x.dataset.r===f.ref));
+    });
+    refIn.addEventListener('input',()=>{f.ref=refIn.value.trim();$('fRefs').querySelectorAll('[data-r]').forEach(x=>x.classList.remove('on'))});
     const custIn=$('fCust');
     let autoName='';
     const showHint=()=>{
       const c=normCustomer(custIn.value);const box=$('fHint');
+      const rc=$('fRecent');if(rc)rc.hidden=!!c;
       if(!c){box.innerHTML='';return}
       if(!c.startsWith('@')&&!/^09\d{9}$/.test(c)){box.innerHTML=c.length>=4?`<div class="hint">${c.length===11?'این شماره موبایل نیست (موبایل با ۰۹ شروع می‌شود).':`شماره ${fa(c.length)} رقمی است؛ موبایل ۱۱ رقم است.`}</div>`:'';return}
       const h=custHistory(c,b&&b.id);const known=S.customers[c];
@@ -909,34 +974,39 @@ function openForm(opts){
       else if(known){box.innerHTML=`<div class="hint">این شماره قبلاً ثبت شده ولی هنوز خدمتی انجام نشده.</div>`}
       else box.innerHTML=`<div class="hint"><b>مشتری جدید</b></div>`;
     };
-    custIn.addEventListener('input',showHint);
-    custIn.addEventListener('paste',()=>setTimeout(()=>{custIn.value=normCustomer(custIn.value);showHint()},0));
+    let noPhoneOk=false;
+    const custChanged=()=>{noPhoneOk=false;$('fSave').textContent=move?'ثبت جابه‌جایی':b?'ذخیره‌ی تغییرات':'ثبت نوبت';showHint()};
+    custIn.addEventListener('input',custChanged);
+    custIn.addEventListener('paste',()=>setTimeout(()=>{custIn.value=normCustomer(custIn.value);custChanged()},0));
     custIn.addEventListener('blur',()=>{if(custIn.value)custIn.value=normCustomer(custIn.value);showHint()});
     showHint();
+    $('fRecent')&&$('fRecent').addEventListener('click',e=>{const c=e.target.closest('[data-c]');if(!c)return;custIn.value=c.dataset.c;custChanged()});
     $('fPaste').addEventListener('click',async()=>{
-      try{const t=await navigator.clipboard.readText();if(!t)throw 0;custIn.value=normCustomer(t);showHint()}
+      try{const t=await navigator.clipboard.readText();if(!t)throw 0;custIn.value=normCustomer(t);custChanged()}
       catch(e){custIn.focus();toast('انگشت را روی کادر نگه دار و «Paste» را بزن')}
     });
-    let noPhoneOk=false;
-    custIn.addEventListener('input',()=>{noPhoneOk=false;$('fSave').textContent=b?'ذخیره‌ی تغییرات':'ثبت نوبت'});
     $('fSave').addEventListener('click',()=>{
-      const time=$('fTime').value, rawCust=custIn.value.trim(); let cust=normCustomer(rawCust);
+      const time=timeIn.value, rawCust=custIn.value.trim(); let cust=normCustomer(rawCust);
       if(!cust&&rawCust&&!$('fName').value.trim()) $('fName').value=rawCust;
-      if(!time){toast('ساعت را وارد کن');$('fTime').focus();return}
+      if(!time){toast('ساعت را انتخاب کن');$('fTimes').scrollIntoView({block:'center'});return}
       if(!f.services.length){toast('خدمت را انتخاب کن');return}
       if(!cust&&!$('fName').value.trim()){toast('شماره یا اسم مشتری را بنویس');custIn.focus();return}
       if(!f.source){toast('از کجا آمد؟ را انتخاب کن');const sr=$('fSrc');sr.classList.add('need');sr.scrollIntoView({block:'center'});return}
       if(b&&b.status==='done'&&!num(amtIn.value)){toast('این نوبت انجام شده؛ مبلغ فاکتور را بنویس');amtIn.focus();return}
       if(!/^09\d{9}$/.test(cust)&&!noPhoneOk){noPhoneOk=true;$('fSave').textContent='بدون شماره ثبت کن';
         $('fHint').innerHTML=`<div class="hint clash">شماره‌ی موبایل نیست؛ این نوبت به سابقه‌ی پیامک${S.pilot?' و پایلوت':''} وصل نمی‌شود. اگر شماره را نداری، دوباره بزن.</div>`;custIn.focus();return}
-      const rec={date:dateIn.value||view,time,customer:cust,name:$('fName').value.trim(),services:f.services,source:f.source,ref:(f.source==='mani'||f.source==='recep')?$('fRef').value.trim():'',amount:num(amtIn.value)||null};
+      const ref=refSource(f.source)?f.ref:'';
+      if(ref&&!(S.settings.refs||[]).includes(ref))(S.settings.refs=S.settings.refs||[]).push(ref);
+      const rec={date:dateIn.value||view,time,customer:cust,name:$('fName').value.trim(),services:f.services,source:f.source,ref,note:$('fNote').value.trim(),amount:num(amtIn.value)||null};
       rec.pct=rec.amount?(b&&b.pct!=null?b.pct:curPct()):null;
       if(cust){S.customers[cust]=Object.assign(S.customers[cust]||{},rec.name?{name:rec.name}:{} ,{seen:Date.now()})}
+      const moved=b&&b.status==='booked'&&(b.date!==rec.date||b.time!==rec.time);
+      if(moved)b.moves=(b.moves||[]).concat({date:b.date,time:b.time,at:Date.now()});
       if(b){Object.assign(b,rec,{updated:Date.now()})}
-      else S.bookings.push(Object.assign({id:uid(),status:'booked',note:'',created:Date.now()},rec));
-      save();if(mode==='day')view=rec.date;closeSheet();render();toast(b?'تغییرات ذخیره شد':'نوبت ثبت شد');
+      else S.bookings.push(Object.assign({id:uid(),status:'booked',created:Date.now()},rec));
+      save();if(mode==='day')view=rec.date;closeSheet();render();toast(moved?'نوبت جابه‌جا شد':b?'تغییرات ذخیره شد':'نوبت ثبت شد');
     });
-  });
+  },'form');
 }
 
 /* booking actions */
@@ -954,7 +1024,7 @@ function openActions(id){
       <div class="hstack"><input class="inp ltr" id="aAmt" inputmode="numeric" placeholder="مثلاً 850000" value="${priceGuess}"><button class="btn ok" id="aDone">انجام شد ✓</button></div>
       <div class="money" id="aAmtFa"></div></div>
     <div class="grid2"><button class="btn bad" id="aCancel">لغو شد</button><button class="btn bad" id="aNoshow">نیامد</button></div>
-    ${b.status!=='booked'?'<button class="btn" id="aReset">برگرداندن به «رزرو»</button>':''}
+    ${b.status==='booked'?'<button class="btn" id="aMove">جابه‌جا شد (روز یا ساعت دیگر)</button>':'<button class="btn" id="aReset">برگرداندن به «رزرو»</button>'}
     <div class="grid2"><button class="btn" id="aEdit">ویرایش</button><button class="btn bad" id="aDel">حذف</button></div>
     ${h.length?`<div class="sect"><h3>سابقه‌ی این مشتری</h3><div class="hist">${h.slice(0,6).map(x=>`<span>${faDay(x.date).short} · ${esc(x.services.map(svcLabel).join('، '))}${x.amount?' · '+money(x.amount):''}</span>`).join('')}</div></div>`:''}
   `,()=>{
@@ -965,6 +1035,7 @@ function openActions(id){
     $('aCancel').addEventListener('click',()=>set('cancel'));
     $('aNoshow').addEventListener('click',()=>set('noshow'));
     $('aReset')&&$('aReset').addEventListener('click',()=>set('booked'));
+    $('aMove')&&$('aMove').addEventListener('click',()=>openForm({id,move:true}));
     $('aEdit').addEventListener('click',()=>openForm({id}));
     let armed=false;$('aDel').addEventListener('click',e=>{
       if(!armed){armed=true;e.target.textContent='برای حذف دوباره بزن';return}
@@ -975,11 +1046,11 @@ function openActions(id){
 
 /* backup + settings */
 function csv(){
-  const head=['id','date_shamsi','date','time','customer','name','services','minutes','source','referrer','status','amount','share_pct','my_share','note','created_at'];
+  const head=['id','date_shamsi','date','time','customer','name','services','minutes','source','referrer','status','amount','share_pct','my_share','note','created_at','moved_from'];
   const q=v=>{v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
   const rows=[...S.bookings].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).map(b=>[
     b.id,shamsi(b.date),b.date,b.time,b.customer,b.name||(S.customers[b.customer]||{}).name||'',
-    (b.services||[]).map(svcLabel).join('+'),dur(b),(SOURCES.find(s=>s[0]===b.source)||[,''])[1],b.ref||'',STATUS[b.status],b.amount??'',b.amount?(b.pct!=null?b.pct:curPct()):'',b.amount?shareOf(b):'',b.note||'',new Date(b.created).toISOString()]);
+    (b.services||[]).map(svcLabel).join('+'),dur(b),(SOURCES.find(s=>s[0]===b.source)||[,''])[1],b.ref||'',STATUS[b.status],b.amount??'',b.amount?(b.pct!=null?b.pct:curPct()):'',b.amount?shareOf(b):'',b.note||'',new Date(b.created).toISOString(),(b.moves||[]).map(m=>shamsi(m.date)+' '+m.time).join(' ; ')]);
   return [head,...rows].map(r=>r.map(q).join(',')).join('\n');
 }
 function stamp(){return shamsi(todayIso()).replace(/\//g,'-')}
@@ -1037,14 +1108,18 @@ function openMenu(){
       <span class="small">اسم · مدت (دقیقه) · هم‌زمان (دقیقه‌هایی که کنار خدمت دیگر انجام می‌شود) · قیمت پیش‌فرض (تومان)</span>
       <div id="mSvcs" style="display:flex;flex-direction:column;gap:6px">${S.settings.services.map((s,i)=>`<div class="svcrow"><input class="inp" id="sl${i}" value="${esc(s.label)}"><input class="inp ltr" id="sm${i}" inputmode="numeric" value="${s.min}" aria-label="مدت"><input class="inp ltr" id="so${i}" inputmode="numeric" value="${s.over||''}" placeholder="۰" aria-label="هم‌زمان"><input class="inp ltr" id="sp${i}" inputmode="numeric" value="${s.price||''}"></div>`).join('')}</div>
       <button class="btn" id="mAddSvc">+ خدمت جدید</button>
+      <h3 style="margin-top:6px">همکارهای معرف</h3>
+      <span class="small">همین اسم‌ها در فرم نوبت دکمه می‌شوند. اسم تکراری یک نفر را پاک کن.</span>
+      <div id="mRefs" style="display:flex;flex-direction:column;gap:6px">${(S.settings.refs||[]).map((r,i)=>`<div class="hstack"><input class="inp" id="rf${i}" value="${esc(r)}" style="height:42px;font-size:16px"><button class="btn bad" data-rfdel="${i}" aria-label="پاک کردن ${esc(r)}" style="height:42px">✕</button></div>`).join('')}</div>
+      <button class="btn" id="mAddRef">+ همکار</button>
       <div class="grid2"><div class="field"><label for="mStart">شروع کار</label><input type="time" class="inp ltr" id="mStart" value="${S.settings.dayStart}"></div><div class="field"><label for="mEnd">پایان کار</label><input type="time" class="inp ltr" id="mEnd" value="${S.settings.dayEnd}"></div></div>
       <div class="field"><label for="mPct">سهم من از هر فاکتور (درصد)</label><input class="inp ltr" id="mPct" inputmode="numeric" value="${S.settings.sharePct||65}"></div>
       <button class="btn primary" id="mSaveSet">ذخیره‌ی تنظیمات</button>
     </div>
-    <div class="sect"><h3>پایلوت</h3>
+    ${PILOT_ON?`<div class="sect"><h3>پایلوت</h3>
       ${S.pilot&&S.pilot.draws.length?'<button class="btn" id="mPilotMsgs">پیام‌های پایلوت و جواب‌ها</button>':''}
       <button class="btn" id="mPilot">مدیریت پایلوت (سجاد)</button>
-    </div>
+    </div>`:''}
     <div class="sect"><h3>امتحان</h3>
       ${samples?`<button class="btn bad" id="mClearSample">پاک کردن ${fa(samples)} نوبت نمونه</button>`:`<button class="btn" id="mSample">چند نوبت نمونه برای امروز و فردا بساز</button>`}
     </div>
@@ -1058,29 +1133,33 @@ function openMenu(){
       r.onload=()=>{fileText=String(r.result);const b=$('mDoRestoreFile');b.hidden=false;rs.armed=false;restoreFrom(fileText,b,rs)};r.readAsText(f)});
     $('mDoRestoreFile').addEventListener('click',e=>restoreFrom(fileText,e.target,rs));
     $('mDoRestore').addEventListener('click',e=>restoreFrom($('mRestore').value,e.target,rs));
+    $('mAddRef').addEventListener('click',()=>{collectSvcs();(S.settings.refs=S.settings.refs||[]).push('');save();openMenu();const l=$('mRefs').querySelectorAll('input');l.length&&l[l.length-1].focus()});
+    $('mRefs').addEventListener('click',e=>{const d=e.target.closest('[data-rfdel]');if(!d)return;collectSvcs();S.settings.refs.splice(Number(d.dataset.rfdel),1);save();openMenu()});
     $('mAddSvc').addEventListener('click',()=>{collectSvcs();S.settings.services.push({id:'s'+uid(),label:'خدمت جدید',min:30,price:0});save();openMenu()});
     $('mSaveSet').addEventListener('click',()=>{collectSvcs();{const st=$('mStart').value||'07:00',en=$('mEnd').value||'21:00';if(toMin(en)<=toMin(st)){toast('ساعت پایان کار باید بعد از شروع باشد');return}S.settings.dayStart=st;S.settings.dayEnd=en}{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
-    $('mPilot').addEventListener('click',()=>{closeSheet(true);openPanel('admin')});
+    $('mPilot')&&$('mPilot').addEventListener('click',()=>{closeSheet(true);openPanel('admin')});
     $('mPilotMsgs')&&$('mPilotMsgs').addEventListener('click',()=>{closeSheet(true);openPanel('msgs')});
     $('mSample')&&$('mSample').addEventListener('click',()=>{makeSamples();save();closeSheet();view=todayIso();render();toast('نوبت‌های نمونه ساخته شد')});
     $('mClearSample')&&$('mClearSample').addEventListener('click',()=>{S.bookings=S.bookings.filter(b=>!b.sample);Object.keys(S.customers).forEach(k=>{if(S.customers[k].sample)delete S.customers[k]});save();closeSheet();render();toast('نمونه‌ها پاک شد')});
   });
 }
 function collectSvcs(){
+  const rl=[];(S.settings.refs||[]).forEach((r,i)=>{const el=$('rf'+i);const v=(el?el.value:r).trim();if(v&&!rl.includes(v))rl.push(v)});if($('mRefs'))S.settings.refs=rl;
   S.settings.services.forEach((s,i)=>{const l=$('sl'+i);if(!l)return;s.label=l.value.trim()||s.label;s.min=num($('sm'+i).value)||s.min;s.over=Math.min(num($('so'+i).value),s.min);s.price=num($('sp'+i).value)});
 }
 function makeSamples(){
   const t=todayIso(),f=addDays(t,1),p=addDays(t,-20);
   const C=['09120000001','09350000002','09190000003','@sample.nail','09130000004'];
   C.forEach((c,i)=>S.customers[c]={name:['خانم الف','خانم ب','','خانم د','خانم ه'][i],sample:true});
+  const sv=i=>[S.settings.services[i%S.settings.services.length].id];
   const mk=(date,time,c,svcs,st,amt,src,ref)=>S.bookings.push({id:uid(),sample:true,date,time,customer:c,name:'',services:svcs,source:src||'direct',ref:ref||'',note:'',status:st,amount:amt||null,created:Date.now()});
-  mk(p,'11:00',C[0],['gel'],'done',650000);
-  mk(t,'09:30',C[0],['gel','ped'],'done',1450000);
-  mk(t,'12:30',C[1],['ped'],'booked',null,'insta');
-  mk(t,'15:00',C[2],['tar'],'cancel');
-  mk(t,'15:15',C[3],['gel'],'booked',null,'mani','سارا');
-  mk(t,'17:30',C[4],['pla'],'booked',null,'recep');
-  mk(f,'10:00',C[1],['gel'],'booked');
+  mk(p,'11:00',C[0],sv(0),'done',650000);
+  mk(t,'09:30',C[0],[...sv(0),...sv(1)],'done',1450000);
+  mk(t,'12:30',C[1],sv(1),'booked',null,'insta');
+  mk(t,'15:00',C[2],sv(2),'cancel');
+  mk(t,'15:15',C[3],sv(0),'booked',null,SOURCES[2][0],'سارا');
+  mk(t,'17:30',C[4],sv(3),'booked',null,'recep');
+  mk(f,'10:00',C[1],sv(0),'booked');
 }
 
 /* ---------- pilot (SMS experiment) screens — rules live in PILOT-CORE ---------- */
@@ -1434,6 +1513,9 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState!==
 // K. install button + L. offline worker
 let installEvt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;$('installBar').hidden=false});
+{const standalone=navigator.standalone||matchMedia('(display-mode: standalone)').matches;let seen=false;try{seen=!!localStorage.getItem(KEY+'-ioshint')}catch(_){}
+  if(isIOS()&&!standalone&&!seen){const bar=$('installBar');bar.hidden=false;bar.querySelector('span').innerHTML='برای نصب روی آیفون: در Safari دکمه‌ی <b>Share</b> (مربع با فلش) ← <b>Add to Home Screen</b>. بدون نصب، آیفون ممکن است داده‌ها را پاک کند.';
+    $('installBtn').textContent='باشه';$('installBtn').addEventListener('click',()=>{try{localStorage.setItem(KEY+'-ioshint','1')}catch(_){}bar.hidden=true})}}
 $('installBtn').addEventListener('click',async()=>{if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(_){}installEvt=null;$('installBar').hidden=true});
 if('serviceWorker' in navigator&&location.protocol!=='file:'){
   const hadCtl=!!navigator.serviceWorker.controller;
