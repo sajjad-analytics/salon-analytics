@@ -266,6 +266,54 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   console.log('E ok: xlsx import');
 }
 
+// F. booking fixes: back gesture closes sheets/pages, done needs an amount, a booking needs a number or name, overlapping service times
+{
+  const pf = await newPage();
+  await pf.goto(ORIGIN + '/');
+  // old default service times are migrated; edited ones would be left alone
+  await pf.evaluate(k => localStorage.setItem(k, JSON.stringify({v: 1, bookings: [], customers: {}, settings: {services: [
+    {id: 'gel', label: 'ژل پا', min: 30, price: 600000}, {id: 'ped', label: 'پدیکور', min: 60, price: 0},
+    {id: 'tar', label: 'ترمیم', min: 30, price: 0}, {id: 'pla', label: 'پلاژن', min: 90, price: 0}], dayStart: '07:00', dayEnd: '21:00', sharePct: 65, hoursV: 2}})), KEY);
+  await pf.reload();
+  const durs = await pf.evaluate(() => { const d = window.__daftar.dur; return [d({services: ['ped', 'pla']}), d({services: ['pla']}), d({services: ['gel', 'ped']})] });
+  assert.deepEqual(durs, [80, 60, 70], 'pedicure+plazhen 80, plazhen alone 60, gel+pedicure 70');
+  const url = pf.url();
+  const back = async () => { await pf.evaluate(() => history.back()); await pf.waitForTimeout(150) };
+  const sheetOpen = () => pf.evaluate(() => !!document.getElementById('sheetRoot').innerHTML);
+  // back closes a sheet and stays in the app; closing with ✕ leaves no extra history entry
+  await pf.click('#menuBtn'); assert.ok(await sheetOpen());
+  await back(); assert.equal(await sheetOpen(), false, 'back closed the menu'); assert.equal(pf.url(), url);
+  await pf.click('#menuBtn'); await pf.click('[data-close]'); await pf.waitForTimeout(150);
+  assert.equal(await pf.evaluate(() => history.state), null, 'no stale entry after ✕');
+  // menu → pilot page → back: page closes, app still open
+  await pf.click('#menuBtn'); await pf.click('#mPilot');
+  assert.equal(await pf.isVisible('#pilotRoot'), true);
+  await back(); assert.equal(await pf.isVisible('#pilotRoot'), false, 'back closed the pilot page'); assert.equal(pf.url(), url);
+  // a booking needs a number or a name; without a mobile number it asks once more
+  await pf.click('#addBtn'); await pf.fill('#fTime', '20:00'); await pf.click('#fSvc [data-s="tar"]');
+  await pf.click('#fSave'); assert.equal((await state(pf)).bookings.length, 0, 'no number, no name: not saved');
+  await pf.fill('#fName', 'آزمون'); await pf.click('#fSave');
+  assert.equal((await state(pf)).bookings.length, 0, 'no number: asks first');
+  assert.equal((await pf.textContent('#fSave')).trim(), 'بدون شماره ثبت کن');
+  await pf.click('#fSave'); assert.equal((await state(pf)).bookings.length, 1, 'saved on the second tap');
+  // «انجام شد» with an empty amount does nothing
+  await pf.click('#list .item'); await pf.fill('#aAmt', ''); await pf.click('#aDone');
+  assert.equal((await state(pf)).bookings[0].status, 'booked', 'done without an amount refused');
+  await pf.fill('#aAmt', '500000'); await pf.click('#aDone');
+  let st = await state(pf); assert.equal(st.bookings[0].status, 'done'); assert.equal(st.bookings[0].amount, 500000);
+  // «همه را انجام شد»: uses the default price; a booking with no price stays booked
+  await pf.click('#addBtn'); await pf.fill('#fTime', '19:00'); await pf.fill('#fCust', '09120000009'); await pf.click('#fSvc [data-s="gel"]'); await pf.fill('#fAmt', ''); await pf.click('#fSave');
+  await pf.click('#addBtn'); await pf.fill('#fTime', '18:00'); await pf.fill('#fCust', '09120000008'); await pf.click('#fSvc [data-s="tar"]'); await pf.click('#fSave');
+  await pf.click('#allDone');
+  st = await state(pf);
+  const by = c => st.bookings.find(b => b.customer === c);
+  assert.equal(by('09120000009').status, 'done'); assert.equal(by('09120000009').amount, 600000);
+  assert.equal(by('09120000008').status, 'booked', 'no default price: stays booked');
+  assert.ok(st.bookings.every(b => b.status !== 'done' || b.amount > 0), 'no done booking without an amount');
+  await noHScroll(pf, 'booking fixes');
+  console.log('F ok: back gesture, amounts, booking identity, service times');
+}
+
 // D. preview copy: own storage key and service worker; the real app's worker never answers for it
 {
   const ctx = await browser.newContext({viewport: {width: 375, height: 812}, serviceWorkers: 'allow', acceptDownloads: true});

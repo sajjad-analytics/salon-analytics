@@ -109,7 +109,7 @@ textarea.inp{height:auto;min-height:90px;padding:10px 12px;font-size:13px;direct
 .hist{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:2px;font-variant-numeric:tabular-nums}
 .sect{border-top:1px solid var(--line);padding-top:14px;display:flex;flex-direction:column;gap:10px}
 .sect h3{margin:0;font-size:15px}
-.svcrow{display:grid;grid-template-columns:1fr 70px 110px;gap:6px}
+.svcrow{display:grid;grid-template-columns:1fr 54px 54px 96px;gap:6px}
 .svcrow .inp{height:42px;font-size:15px}
 .small{font-size:12px;color:var(--muted)}
 .toast{position:fixed;bottom:calc(84px + env(safe-area-inset-bottom,0px));inset-inline:16px;margin:0 auto;max-width:400px;background:var(--ink);color:var(--paper);border-radius:12px;padding:10px 14px;text-align:center;z-index:30;font-size:15px}
@@ -627,9 +627,9 @@ const SOURCES=[['direct','مستقیم'],['insta','اینستاگرام'],['mani
 const STATUS={booked:'رزرو',done:'انجام شد',cancel:'لغو',noshow:'نیامد'};
 const DEF_SETTINGS={services:[
   {id:'gel',label:'ژل پا',min:30,price:0},
-  {id:'ped',label:'پدیکور',min:60,price:0},
+  {id:'ped',label:'پدیکور',min:40,price:0},
   {id:'tar',label:'ترمیم',min:30,price:0},
-  {id:'pla',label:'پلاژن',min:90,price:0}],
+  {id:'pla',label:'پلاژن',min:60,over:20,price:0}],
   dayStart:'07:00',dayEnd:'21:00',sharePct:65};
 
 /* ---------- helpers ---------- */
@@ -674,6 +674,10 @@ try{const raw=localStorage.getItem(KEY);if(raw){let o;try{o=JSON.parse(raw)}catc
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));storageOk=true}catch(e){storageOk=false;toast('ذخیره نشد: حافظه‌ی مرورگر در دسترس نیست')}}
 // migration: working hours now start at 07:00 (only if still on the old 09:00 default)
 if(!S.settings.hoursV){if(S.settings.dayStart==='09:00')S.settings.dayStart='07:00';S.settings.hoursV=2;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(_){}}
+// migration: service times as Mojgan gave them (only if the old defaults were never edited)
+if(!S.settings.svcV){const g=id=>S.settings.services.find(x=>x.id===id),ped=g('ped'),pla=g('pla');
+  if(ped&&ped.min===60)ped.min=40;if(pla&&pla.min===90){pla.min=60;pla.over=20}
+  S.settings.svcV=3;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(_){}}
 // migration: lock the share % on bookings that already have an amount
 S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=curPct()});
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
@@ -683,9 +687,15 @@ let mode='day';try{mode=localStorage.getItem(KEY+'-mode')==='week'?'week':'day'}
 function setMode(m){mode=m;try{localStorage.setItem(KEY+'-mode',m)}catch(_){}if(m==='week')view=todayIso();render();window.scrollTo(0,0)}
 const svc=id=>S.settings.services.find(s=>s.id===id);
 const svcLabel=id=>(svc(id)||{label:id}).label;
-const dur=b=>Math.max(15,(b.services||[]).reduce((a,id)=>a+((svc(id)||{}).min||30),0)||30);
+// minutes for a set of services; with two or more, each service's «over» minutes run alongside the others
+function durOf(ids){
+  const ss=(ids||[]).map(id=>svc(id)||{min:30});if(!ss.length)return 0;
+  const sum=ss.reduce((a,x)=>a+(x.min||30),0);if(ss.length<2)return sum;
+  return Math.max(...ss.map(x=>x.min||30),sum-ss.reduce((a,x)=>a+(x.over||0),0));
+}
+const dur=b=>Math.max(15,durOf(b.services)||30);
 const active=b=>b.status==='booked'||b.status==='done';
-function history(cust,exceptId){
+function custHistory(cust,exceptId){
   if(!cust) return [];
   return S.bookings.filter(b=>b.customer===cust&&b.id!==exceptId&&b.status==='done')
     .sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
@@ -778,13 +788,17 @@ function renderDayList(){
     </section>`;
   }
   list.innerHTML=html;
-  const ad=$('allDone');if(ad)ad.addEventListener('click',e=>{e.stopPropagation();day.filter(b=>b.status==='booked').forEach(b=>{b.status='done';b.updated=Date.now();if(b.amount&&b.pct==null)b.pct=curPct()});save();render();toast('همه ثبت شد')});
+  // every booking gets its saved amount or the services' default price; one with neither stays «رزرو»
+  const ad=$('allDone');if(ad)ad.addEventListener('click',e=>{e.stopPropagation();let left=0;
+    day.filter(b=>b.status==='booked').forEach(b=>{const v=b.amount||(b.services||[]).reduce((a,s)=>a+((svc(s)||{}).price||0),0);
+      if(!v){left++;return}Object.assign(b,{status:'done',amount:v,pct:b.pct!=null?b.pct:curPct(),updated:Date.now()})});
+    save();render();toast(left?`${fa(left)} نوبت قیمت پیش‌فرض ندارد؛ تک‌تک با مبلغ ثبت کن`:'همه ثبت شد')});
 }
 function gapHtml(a,b){
   return `<button class="gapitem" data-gap="${fromMin(a)}"><span>خالی · <b>${faTime(fromMin(a))}</b> تا <b>${faTime(fromMin(b))}</b> · ${fa(b-a)} دقیقه</span><span class="plus">+ ثبت</span></button>`;
 }
 function itemHtml(b,clash){
-  const h=history(b.customer,b.id).filter(x=>(x.date+x.time)<(b.date+b.time));
+  const h=custHistory(b.customer,b.id).filter(x=>(x.date+x.time)<(b.date+b.time));
   const c=S.customers[b.customer]||{};
   const name=b.name||c.name||'';
   const custTxt=b.customer?(b.customer.startsWith('@')?`<span class="ph">${esc(b.customer)}</span>`:`<span class="ph">${fa(b.customer)}</span>`):'';
@@ -800,13 +814,19 @@ function itemHtml(b,clash){
 
 /* ---------- sheets ---------- */
 function openSheet(html,onMount){
-  const root=$('sheetRoot');
+  const root=$('sheetRoot');if(!root.innerHTML)navPush({sheet:1});
   root.innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   $('scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closeSheet()});
   root.querySelectorAll('[data-close]').forEach(x=>x.addEventListener('click',closeSheet));
   onMount&&onMount(root.querySelector('.sheet'));
 }
-function closeSheet(){$('sheetRoot').innerHTML=''}
+// keep=true: another page opens right after and takes over the sheet's history entry
+function closeSheet(keep){const was=!!$('sheetRoot').innerHTML;$('sheetRoot').innerHTML='';if(was&&keep!==true)navBack('sheet')}
+// the phone's back gesture closes the top sheet or page instead of leaving the app
+let popSkip=0;
+function navPush(st){try{if(history.state&&history.state.sheet)history.replaceState(st,'');else history.pushState(st,'')}catch(_){}}
+function navBack(k){try{if(history.state&&history.state[k]){popSkip++;history.back()}}catch(_){}}
+try{if(history.state&&(history.state.sheet||history.state.pilot))history.replaceState(null,'')}catch(_){}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 
 /* booking form */
@@ -829,7 +849,7 @@ function openForm(opts){
       <div class="hstack"><input class="inp ltr" id="fCust" inputmode="tel" autocomplete="off" placeholder="09xx xxx xxxx" value="${esc(f.customer)}"><button class="btn" id="fPaste">چسباندن</button></div>
       <div id="fHint"></div>
     </div>
-    <div class="field"><label for="fName">اسم (اختیاری)</label><input class="inp" id="fName" autocomplete="off" value="${esc(f.name)}"></div>
+    <div class="field"><label for="fName">اسم</label><input class="inp" id="fName" autocomplete="off" value="${esc(f.name)}"></div>
     <div class="field"><span class="flabel">خدمت</span>
       <div class="chips" id="fSvc">${S.settings.services.map(s=>`<button class="chip${f.services.includes(s.id)?' on':''}" data-s="${s.id}">${esc(s.label)}</button>`).join('')}</div>
       <span class="small" id="fDur"></span>
@@ -865,7 +885,7 @@ function openForm(opts){
     $('fFrees').addEventListener('click',e=>{const c=e.target.closest('[data-t]');if(c){$('fTime').value=c.dataset.t;toast('ساعت '+fa(c.dataset.t)+' انتخاب شد')}});
     syncDays();
     const svcBox=$('fSvc');
-    const syncDur=()=>{const m=f.services.reduce((a,id)=>a+((svc(id)||{}).min||0),0);$('fDur').textContent=m?`مدت: ${fa(m)} دقیقه`:'یک یا چند خدمت را انتخاب کن'};
+    const syncDur=()=>{const m=durOf(f.services);$('fDur').textContent=m?`مدت: ${fa(m)} دقیقه`:'یک یا چند خدمت را انتخاب کن'};
     svcBox.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{const id=c.dataset.s;const i=f.services.indexOf(id);i>=0?f.services.splice(i,1):f.services.push(id);c.classList.toggle('on',i<0);syncDur()}));
     syncDur();
     const amtIn=$('fAmt');let amtTouched=!!amtIn.value;
@@ -880,7 +900,7 @@ function openForm(opts){
       const c=normCustomer(custIn.value);const box=$('fHint');
       if(!c){box.innerHTML='';return}
       if(!c.startsWith('@')&&!/^09\d{9}$/.test(c)){box.innerHTML=c.length>=4?`<div class="hint">${c.length===11?'این شماره موبایل نیست (موبایل با ۰۹ شروع می‌شود).':`شماره ${fa(c.length)} رقمی است؛ موبایل ۱۱ رقم است.`}</div>`:'';return}
-      const h=history(c,b&&b.id);const known=S.customers[c];
+      const h=custHistory(c,b&&b.id);const known=S.customers[c];
       const nm=$('fName');
       if(known&&known.name&&(!nm.value||nm.value===autoName)){nm.value=known.name;autoName=known.name}
       else if(!known&&autoName&&nm.value===autoName){nm.value='';autoName=''}
@@ -896,11 +916,17 @@ function openForm(opts){
       try{const t=await navigator.clipboard.readText();if(!t)throw 0;custIn.value=normCustomer(t);showHint()}
       catch(e){custIn.focus();toast('انگشت را روی کادر نگه دار و «Paste» را بزن')}
     });
+    let noPhoneOk=false;
+    custIn.addEventListener('input',()=>{noPhoneOk=false;$('fSave').textContent=b?'ذخیره‌ی تغییرات':'ثبت نوبت'});
     $('fSave').addEventListener('click',()=>{
       const time=$('fTime').value, rawCust=custIn.value.trim(); let cust=normCustomer(rawCust);
       if(!cust&&rawCust&&!$('fName').value.trim()) $('fName').value=rawCust;
       if(!time){toast('ساعت را وارد کن');$('fTime').focus();return}
       if(!f.services.length){toast('خدمت را انتخاب کن');return}
+      if(!cust&&!$('fName').value.trim()){toast('شماره یا اسم مشتری را بنویس');custIn.focus();return}
+      if(b&&b.status==='done'&&!num(amtIn.value)){toast('این نوبت انجام شده؛ مبلغ فاکتور را بنویس');amtIn.focus();return}
+      if(!/^09\d{9}$/.test(cust)&&!noPhoneOk){noPhoneOk=true;$('fSave').textContent='بدون شماره ثبت کن';
+        $('fHint').innerHTML=`<div class="hint clash">شماره‌ی موبایل نیست؛ این نوبت به سابقه‌ی پیامک${S.pilot?' و پایلوت':''} وصل نمی‌شود. اگر شماره را نداری، دوباره بزن.</div>`;custIn.focus();return}
       const rec={date:dateIn.value||view,time,customer:cust,name:$('fName').value.trim(),services:f.services,source:f.source,ref:(f.source==='mani'||f.source==='recep')?$('fRef').value.trim():'',amount:num(amtIn.value)||null};
       rec.pct=rec.amount?(b&&b.pct!=null?b.pct:curPct()):null;
       if(cust){S.customers[cust]=Object.assign(S.customers[cust]||{},rec.name?{name:rec.name}:{} ,{seen:Date.now()})}
@@ -914,7 +940,7 @@ function openForm(opts){
 /* booking actions */
 function openActions(id){
   const b=S.bookings.find(x=>x.id===id);if(!b)return;
-  const c=S.customers[b.customer]||{};const h=history(b.customer,b.id);
+  const c=S.customers[b.customer]||{};const h=custHistory(b.customer,b.id);
   const priceGuess=b.amount||(b.services||[]).reduce((a,s)=>a+((svc(s)||{}).price||0),0)||'';
   const isPhone=b.customer&&!b.customer.startsWith('@');
   openSheet(`
@@ -933,7 +959,7 @@ function openActions(id){
     const amt=$('aAmt');const showFa=()=>{const v=num(amt.value);$('aAmtFa').innerHTML=v?`<span>${money(v)} تومان</span><span>سهم من (${b.pct!=null?fa(b.pct)+'٪':pct()}): <b>${money(Math.round(v*(b.pct!=null?b.pct:curPct())/100))}</b></span>${v<10000?'<span class="clash">مبلغ خیلی کم است؛ کل مبلغ را به تومان بنویس.</span>':''}`:''};
     amt.addEventListener('input',showFa);showFa();
     const set=(st,extra)=>{Object.assign(b,{status:st,updated:Date.now()},extra||{});save();closeSheet();render();toast(STATUS[st])};
-    $('aDone').addEventListener('click',()=>{const v=num(amt.value)||null;set('done',{amount:v,pct:v?(b.pct!=null?b.pct:curPct()):null})});
+    $('aDone').addEventListener('click',()=>{const v=num(amt.value);if(!v){toast('مبلغ فاکتور را بنویس');amt.focus();return}set('done',{amount:v,pct:b.pct!=null?b.pct:curPct()})});
     $('aCancel').addEventListener('click',()=>set('cancel'));
     $('aNoshow').addEventListener('click',()=>set('noshow'));
     $('aReset')&&$('aReset').addEventListener('click',()=>set('booked'));
@@ -1006,8 +1032,8 @@ function openMenu(){
       </details>
     </div>
     <div class="sect"><h3>خدمت‌ها</h3>
-      <span class="small">اسم · مدت (دقیقه) · قیمت پیش‌فرض (تومان، برای پر شدن خودکار مبلغ)</span>
-      <div id="mSvcs" style="display:flex;flex-direction:column;gap:6px">${S.settings.services.map((s,i)=>`<div class="svcrow"><input class="inp" id="sl${i}" value="${esc(s.label)}"><input class="inp ltr" id="sm${i}" inputmode="numeric" value="${s.min}"><input class="inp ltr" id="sp${i}" inputmode="numeric" value="${s.price||''}"></div>`).join('')}</div>
+      <span class="small">اسم · مدت (دقیقه) · هم‌زمان (دقیقه‌هایی که کنار خدمت دیگر انجام می‌شود) · قیمت پیش‌فرض (تومان)</span>
+      <div id="mSvcs" style="display:flex;flex-direction:column;gap:6px">${S.settings.services.map((s,i)=>`<div class="svcrow"><input class="inp" id="sl${i}" value="${esc(s.label)}"><input class="inp ltr" id="sm${i}" inputmode="numeric" value="${s.min}" aria-label="مدت"><input class="inp ltr" id="so${i}" inputmode="numeric" value="${s.over||''}" placeholder="۰" aria-label="هم‌زمان"><input class="inp ltr" id="sp${i}" inputmode="numeric" value="${s.price||''}"></div>`).join('')}</div>
       <button class="btn" id="mAddSvc">+ خدمت جدید</button>
       <div class="grid2"><div class="field"><label for="mStart">شروع کار</label><input type="time" class="inp ltr" id="mStart" value="${S.settings.dayStart}"></div><div class="field"><label for="mEnd">پایان کار</label><input type="time" class="inp ltr" id="mEnd" value="${S.settings.dayEnd}"></div></div>
       <div class="field"><label for="mPct">سهم من از هر فاکتور (درصد)</label><input class="inp ltr" id="mPct" inputmode="numeric" value="${S.settings.sharePct||65}"></div>
@@ -1032,14 +1058,14 @@ function openMenu(){
     $('mDoRestore').addEventListener('click',e=>restoreFrom($('mRestore').value,e.target,rs));
     $('mAddSvc').addEventListener('click',()=>{collectSvcs();S.settings.services.push({id:'s'+uid(),label:'خدمت جدید',min:30,price:0});save();openMenu()});
     $('mSaveSet').addEventListener('click',()=>{collectSvcs();{const st=$('mStart').value||'07:00',en=$('mEnd').value||'21:00';if(toMin(en)<=toMin(st)){toast('ساعت پایان کار باید بعد از شروع باشد');return}S.settings.dayStart=st;S.settings.dayEnd=en}{const v=num($('mPct').value);if(v>0&&v<=100)S.settings.sharePct=v};save();closeSheet();render();toast('تنظیمات ذخیره شد')});
-    $('mPilot').addEventListener('click',()=>{closeSheet();openPanel('admin')});
-    $('mPilotMsgs')&&$('mPilotMsgs').addEventListener('click',()=>{closeSheet();openPanel('msgs')});
+    $('mPilot').addEventListener('click',()=>{closeSheet(true);openPanel('admin')});
+    $('mPilotMsgs')&&$('mPilotMsgs').addEventListener('click',()=>{closeSheet(true);openPanel('msgs')});
     $('mSample')&&$('mSample').addEventListener('click',()=>{makeSamples();save();closeSheet();view=todayIso();render();toast('نوبت‌های نمونه ساخته شد')});
     $('mClearSample')&&$('mClearSample').addEventListener('click',()=>{S.bookings=S.bookings.filter(b=>!b.sample);Object.keys(S.customers).forEach(k=>{if(S.customers[k].sample)delete S.customers[k]});save();closeSheet();render();toast('نمونه‌ها پاک شد')});
   });
 }
 function collectSvcs(){
-  S.settings.services.forEach((s,i)=>{const l=$('sl'+i);if(!l)return;s.label=l.value.trim()||s.label;s.min=num($('sm'+i).value)||s.min;s.price=num($('sp'+i).value)});
+  S.settings.services.forEach((s,i)=>{const l=$('sl'+i);if(!l)return;s.label=l.value.trim()||s.label;s.min=num($('sm'+i).value)||s.min;s.over=Math.min(num($('so'+i).value),s.min);s.price=num($('sp'+i).value)});
 }
 function makeSamples(){
   const t=todayIso(),f=addDays(t,1),p=addDays(t,-20);
@@ -1084,12 +1110,13 @@ function renderPilotHome(){
 
 // full-screen pages on top of the app; the phone's back gesture closes them
 const pStack=[];
-function openPanel(name){pStack.push(name);try{history.pushState({pilot:pStack.length},'')}catch(_){}document.body.style.overflow='hidden';$('pilotRoot').scrollTop=0;drawPanel()}
-function panelBack(){if(history.state&&history.state.pilot)history.back();else{pStack.pop();afterPop()}}
+function openPanel(name){pStack.push(name);navPush({pilot:pStack.length});document.body.style.overflow='hidden';$('pilotRoot').scrollTop=0;drawPanel()}
+function panelBack(){pStack.pop();navBack('pilot');afterPop()}
 function afterPop(){if(pStack.length){$('pilotRoot').scrollTop=0;drawPanel();return}$('pilotRoot').hidden=true;$('pilotRoot').innerHTML='';document.body.style.overflow='';render()}
 window.addEventListener('popstate',()=>{
+  if(popSkip){popSkip--;return}
+  if($('sheetRoot').innerHTML){closeSheet(true);return}
   if(!pStack.length)return;
-  if($('sheetRoot').innerHTML){closeSheet();try{history.pushState({pilot:pStack.length},'')}catch(_){}return}
   pStack.pop();afterPop();
 });
 function drawPanel(){
