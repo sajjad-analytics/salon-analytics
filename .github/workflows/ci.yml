@@ -47,7 +47,8 @@ jobs:
       - name: Playwright + ${{ matrix.browser }}
         run: |
           npm install --no-save --no-package-lock playwright@${PLAYWRIGHT_VERSION}
-          npx playwright install --with-deps ${{ matrix.browser }}
+          # apt on the runner sometimes hangs: cap each try and retry
+          for i in 1 2 3; do timeout 300 npx playwright install --with-deps ${{ matrix.browser }} && break; [ $i = 3 ] && exit 1; echo "install try $i failed"; done
       - name: app (tests/e2e.mjs)
         run: node tests/e2e.mjs --browser=${{ matrix.browser }} --width=${{ matrix.width }} --shots
       - name: deployment under /salon-analytics/ (tests/deploy.mjs)

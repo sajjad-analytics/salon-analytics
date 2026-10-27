@@ -833,7 +833,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 /* booking form */
 function openForm(opts){
   const b=opts.id?S.bookings.find(x=>x.id===opts.id):null;
-  const f={date:b?b.date:(opts.date||view),time:b?b.time:(opts.time||''),customer:b?b.customer:'',name:b?b.name:'',services:b?[...b.services]:[],source:b?(b.source||''):'',ref:b?b.ref||'':'',note:b?b.note||'':''};
+  const f={date:b?b.date:(opts.date||view),time:b?b.time:(opts.time||''),customer:b?b.customer:'',name:b?b.name:'',services:b?[...b.services]:[],source:b?(b.source||''):'direct',ref:b?b.ref||'':'',note:b?b.note||'':''};
   const refs=[...new Set(S.bookings.map(x=>x.ref).filter(Boolean))];
   const t0=todayIso();
   openSheet(`
