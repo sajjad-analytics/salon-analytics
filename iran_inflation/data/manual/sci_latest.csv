@@ -1,0 +1,7 @@
+# Official SCI releases that the GitHub mirror (atefekalamati/tse-inflation-analysis) does not have yet.
+# mom_pct = published month-on-month change in percent. A month is used only while it is missing from the mirror.
+# All three groups are required per month; if a group was not published, enter an assumption and say so in `note`.
+ym,group,mom_pct,source,note
+1405-07,total,4.38,SCI release 1405-08-06 (CPI 761.8 vs 729.8),published
+1405-07,food_bev_tobacco,2.4,SCI release 1405-08-06,published (food beverages tobacco monthly)
+1405-07,housing_utilities,3.5,assumption,NOT published in sources found; Shahrivar was 3.5%; forecast sensitivity to 2.5..4.5 is about 0.05 pp/month

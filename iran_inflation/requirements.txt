@@ -5,3 +5,4 @@ openpyxl>=3.1
 jdatetime>=5.0
 matplotlib>=3.8
 statsmodels>=0.14
+tabulate>=0.9

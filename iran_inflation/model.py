@@ -38,6 +38,8 @@ from analyze_data import basket_weights  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 P = ROOT / "data" / "processed"
+MANUAL = ROOT / "data" / "manual" / "sci_latest.csv"
+MANUAL_GROUPS = ["total", "food_bev_tobacco", "housing_utilities"]
 
 COMPONENTS = ["food", "housing", "other"]
 HORIZON = 6
@@ -48,13 +50,45 @@ FX_LAG_AVG = (3, 5)     # months t-3..t-5 enter as one averaged term
 
 
 # ------------------------------------------------------------------ data
-def load_data() -> tuple[pd.DataFrame, dict[str, float]]:
+def manual_months(g: pd.DataFrame, path: Path = MANUAL) -> tuple[pd.DataFrame, list[str]]:
+    """Append SCI releases that the GitHub mirror does not have yet.
+
+    `data/manual/sci_latest.csv` holds one row per (ym, group) with the
+    published month-on-month change in percent (`mom_pct`). A month is used
+    only if it is missing from the mirror and all of MANUAL_GROUPS are given;
+    once the mirror catches up its official levels take precedence.
+    """
+    if not path.exists():
+        return g, []
+    man = pd.read_csv(path, comment="#")
+    added = []
+    for ym_, rows in man.groupby("ym", sort=True):
+        if ym_ in g.index and g.loc[ym_, MANUAL_GROUPS].notna().all():
+            continue
+        mom = rows.set_index("group")["mom_pct"]
+        if not set(MANUAL_GROUPS) <= set(mom.index):
+            raise ValueError(f"{path.name}: {ym_} needs mom_pct for {MANUAL_GROUPS}")
+        prev = g.loc[:ym_].drop(index=ym_, errors="ignore").iloc[-1]
+        new = pd.Series(np.nan, index=g.columns, name=ym_)
+        for grp in MANUAL_GROUPS:
+            new[grp] = prev[grp] * (1 + mom[grp] / 100)
+        g = pd.concat([g.drop(index=ym_, errors="ignore"), new.to_frame().T]).sort_index()
+        added.append(ym_)
+    return g, added
+
+
+def load_data(use_manual: bool = True) -> tuple[pd.DataFrame, dict[str, float]]:
     """Monthly frame with component indices, inflation (100*dlog) and FX change."""
     m = pd.read_csv(P / "master_monthly.csv").set_index("ym")
     usd = m.loc[~m["usd_partial_month"].fillna(False).astype(bool), "usd_avg"]
     g = (pd.read_csv(P / "sci_cpi_groups_long.csv")
            .pivot(index="ym", columns="group", values="cpi"))
+    # base-1400 weights are fixed constants of the official index; recover
+    # them from official levels only (manual rows would add rounding noise)
     w = basket_weights(g)
+    added = []
+    if use_manual:
+        g, added = manual_months(g)
     wf, wh = w["food_bev_tobacco"], w["housing_utilities"]
     wo = 1.0 - wf - wh
     # "other" is backed out so that total = wf*F + wh*H + wo*O holds exactly
@@ -70,6 +104,7 @@ def load_data() -> tuple[pd.DataFrame, dict[str, float]]:
     d = d.join(usd.rename("usd"), how="outer").sort_index()
     d["du"] = 100 * np.log(d["usd"]).diff()
     d["month"] = d.index.str[5:7].astype(int)
+    d.attrs["manual_months"] = added
     weights = {"food": wf, "housing": wh, "other": wo}
     return d, weights
 
@@ -81,6 +116,28 @@ def partial_month_usd() -> tuple[str, float] | None:
     if bool(last.get("usd_partial_month", False)):
         return last["ym"], float(last["usd_avg"])
     return None
+
+
+def known_fx_after(d: pd.DataFrame, origin: str) -> tuple[list[str], np.ndarray]:
+    """FX moves (100*dlog) already observed after the CPI origin.
+
+    CPI is published with a lag, the dollar is daily: every complete month
+    after `origin` plus the running month's average so far are pinned in the
+    forecast instead of simulated (before this, only one partial month was).
+    """
+    months, moves = [], []
+    prev = d.loc[origin, "usd"]
+    ym_ = next_ym(origin)
+    while ym_ in d.index and pd.notna(d.loc[ym_, "usd"]):
+        months.append(ym_)
+        moves.append(100 * np.log(d.loc[ym_, "usd"] / prev))
+        prev = d.loc[ym_, "usd"]
+        ym_ = next_ym(ym_)
+    pm = partial_month_usd()
+    if pm and pm[0] == ym_:
+        months.append(ym_)
+        moves.append(100 * np.log(pm[1] / prev))
+    return months[:HORIZON], np.array(moves[:HORIZON])
 
 
 def next_ym(ym: str, k: int = 1) -> str:
@@ -147,8 +204,14 @@ class FXModel:
         return np.array(out)
 
     def simulate(self, n: int, h: int, rng: np.random.Generator,
-                 first: float | None = None) -> tuple[np.ndarray, np.ndarray]:
-        """Return (du paths [n,h], regime paths [n,h]). `first` pins month 1."""
+                 first: float | np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Return (du paths [n,h], regime paths [n,h]).
+
+        `first` pins the first len(first) months to observed FX moves (a float
+        pins month 1 only); the regime of each pinned month is drawn from its
+        posterior given the move.
+        """
+        pinned = np.atleast_1d(np.asarray(first, float)) if first is not None else np.array([])
         du = np.empty((n, h))
         st = np.empty((n, h), dtype=int)
         prev_s = (rng.random(n) < self.p_last[1]).astype(int)
@@ -157,7 +220,8 @@ class FXModel:
             s = (rng.random(n) < self.P[prev_s, 1]).astype(int)
             mean = self.mu[s] + self.phi * (prev_du - self.mu[prev_s])
             x = mean + self.sigma[s] * rng.standard_normal(n)
-            if k == 0 and first is not None:
+            if k < len(pinned):
+                first = pinned[k]
                 x = np.full(n, first)
                 # regime most consistent with the observed move
                 lik = np.stack([np.exp(-0.5 * ((first - (self.mu[j] + self.phi * (prev_du - self.mu[prev_s])))
@@ -195,14 +259,14 @@ class PriceModel:
         self.n_fixed = 8 if self.use_fx else 4
 
     @classmethod
-    def fit(cls, d: pd.DataFrame, use_fx: bool = True) -> "PriceModel":
+    def fit(cls, d: pd.DataFrame, use_fx: bool = True, half_life: float = HALF_LIFE) -> "PriceModel":
         x = d.copy()
         x["du35"] = x["du"].shift(FX_LAG_AVG[0]).rolling(FX_LAG_AVG[1] - FX_LAG_AVG[0] + 1).mean()
         x = x.dropna(subset=[f"pi_{c}" for c in COMPONENTS] + (["du", "du35"] if use_fx else []))
         need_lags = 6 if use_fx else 3
         x = x.iloc[need_lags:]
         t = np.arange(len(x))
-        w = 0.5 ** ((t[-1] - t) / HALF_LIFE)
+        w = 0.5 ** ((t[-1] - t) / half_life)
         betas, res = {}, {}
         for c in COMPONENTS:
             pi = d[f"pi_{c}"]
@@ -264,11 +328,16 @@ class Forecast:
 
 def forecast(d: pd.DataFrame, weights: dict[str, float], origin: str, n: int = 10000,
              h: int = HORIZON, seed: int = 0, use_fx: bool = True,
-             fx_first: float | None = None, fx_path: np.ndarray | None = None) -> Forecast:
-    """Simulate h months ahead using data up to and including `origin`."""
+             fx_first: float | np.ndarray | None = None, fx_path: np.ndarray | None = None,
+             half_life: float = HALF_LIFE) -> Forecast:
+    """Simulate h months ahead using data up to and including `origin`.
+
+    fx_first: observed FX move(s) pinned at the start of the horizon (nowcast).
+    fx_path:  a full deterministic FX path (scenario / oracle).
+    """
     rng = np.random.default_rng(seed)
     hist = d.loc[:origin]
-    pm = PriceModel.fit(hist, use_fx=use_fx)
+    pm = PriceModel.fit(hist, use_fx=use_fx, half_life=half_life)
     du_hist = hist["du"].dropna()
     fx = FXModel.fit(du_hist)
 
@@ -392,11 +461,16 @@ def run_report(n: int = 20000) -> str:
     d, w = load_data()
     origin = d["pi_total"].dropna().index[-1]
     pm_usd = partial_month_usd()
-    fx_first, note = None, ""
-    if pm_usd and pm_usd[0] == next_ym(origin):
-        fx_first = 100 * np.log(pm_usd[1] / d.loc[origin, "usd"])
-        note = (f"Month 1 ({pm_usd[0]}) uses the free-USD average observed so far "
-                f"({pm_usd[1]:,.0f} rial, {log_to_pct(np.array(fx_first)):+.1f}% vs {origin}).")
+    fx_months, fx_known = known_fx_after(d, origin)
+    fx_first, note = (fx_known if len(fx_known) else None), ""
+    if len(fx_known):
+        note = "FX already observed and pinned: " + ", ".join(
+            f"{m_} {log_to_pct(np.array(x)):+.1f}%" + (" (month to date)" if pm_usd and m_ == pm_usd[0] else "")
+            for m_, x in zip(fx_months, fx_known)) + "."
+    manual = d.attrs.get("manual_months", [])
+    if manual:
+        note += (f" CPI for {', '.join(manual)} comes from data/manual/sci_latest.csv "
+                 "(published release not yet in the mirror; see the note column there).")
     f = forecast(d, w, origin, n=n, fx_first=fx_first)
     end = f.months[-1]
     usd0 = d.loc[origin, "usd"]
@@ -431,13 +505,13 @@ def run_report(n: int = 20000) -> str:
     scen = {"deal / rial recovers (-3%/month)": -3.0, "FX flat": 0.0,
             "steady depreciation (+3%/month)": 3.0, "escalation (+8%/month)": 8.0}
     lines += ["\n## Scenarios: FX path fixed, recalibrated intervals\n",
-              f"Month 1 FX is the observed {pm_usd[0] if pm_usd else ''} move in every scenario.\n",
+              f"Observed FX months ({', '.join(fx_months) or 'none'}) are pinned in every scenario.\n",
               f"| scenario | free USD {end} (k rial) | headline {end} 10% | median | 90% | food median |",
               "|---|---|---|---|---|---|"]
     known = known_errors("fx_known", "total", origin)
     known_food = known_errors("fx_known", "food", origin)
     for name, g in scen.items():
-        path = np.r_[fx_first if fx_first is not None else g, np.full(HORIZON - 1, 100 * np.log1p(g / 100))]
+        path = np.r_[fx_known, np.full(HORIZON - len(fx_known), 100 * np.log1p(g / 100))]
         fs = forecast(d, w, origin, n=n // 2, fx_path=path, seed=2)
         cum = recalibrate(fs.paths["total"].sum(1), known)
         cum_food = recalibrate(fs.paths["food"].sum(1), known_food)
