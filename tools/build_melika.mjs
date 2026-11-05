@@ -28,6 +28,7 @@ html = swap(html, '<title>دفتر نوبت مژگان</title>', '<title>دفت�
 html = swap(html, "['mani','مانیکوریست']", "['mate','معرفی همکار']", 'index.html');
 html = swap(html, 'const PILOT_ON=true;', 'const PILOT_ON=false;', 'index.html');
 html = swap(html, 'const AMOUNT_PREFILL=true;', 'const AMOUNT_PREFILL=false;', 'index.html'); // the real invoice, not the price list
+html = swap(html, 'const AUTO_BACKUP_ON=true;', 'const AUTO_BACKUP_ON=false;', 'index.html'); // weekly upload to Sajjad's Drive is Mojgan's only
 html = swap(html, 'مژگان هستم', 'ملیکا هستم', 'index.html');
 html = swap(html, "url('fonts/", "url('../fonts/", 'index.html');
 html = swap(html, 'href="icons/', 'href="../icons/', 'index.html');

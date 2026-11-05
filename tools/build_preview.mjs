@@ -18,6 +18,7 @@ function swap(text, from, to, file) {
 // ---- index.html
 let html = readFileSync(join(DOCS, 'index.html'), 'utf8');
 html = swap(html, "const KEY='daftar-mojgan-v1';", "const KEY='daftar-preview';", 'index.html');
+html = swap(html, 'const AUTO_BACKUP_ON=true;', 'const AUTO_BACKUP_ON=false;', 'index.html'); // test data never goes to Sajjad's Drive
 html = swap(html, '<title>دفتر نوبت مژگان</title>', '<title>دفتر نوبت · پیش‌نمایش</title>\n<meta name="robots" content="noindex">', 'index.html');
 html = swap(html, "url('fonts/", "url('../fonts/", 'index.html');
 html = swap(html, 'href="icons/', 'href="../icons/', 'index.html');

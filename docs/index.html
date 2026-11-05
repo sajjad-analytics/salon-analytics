@@ -631,6 +631,7 @@ function restoreState(cur,inc,DEF){
   const pct=Number(S.settings.sharePct)||65;
   S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=pct});
   if(!inc.pilot&&cur&&cur.pilot)S.pilot=cur.pilot;
+  if(cur&&cur.autoBackup)S.autoBackup=cur.autoBackup; // this phone's auto-backup switch and clock, not the old file's
   return S;
 }
 
@@ -641,12 +642,59 @@ return {latin,normCustomer,normPhone,normName,daysBetween,addDaysIso,jalaliToIso
   PROFIT,outcomes,linkMap,badgeFor,PILOT_COLS,pilotCsv,logCsv,restoreState};
 })();
 /* PILOT-CORE END */
+/* BACKUP-CORE START */
+// Weekly automatic backup (Mojgan's app only): when the app is open and a week has passed since the last good send,
+// the whole state is POSTed to Sajjad's Google Apps Script receiver (tools/backup_receiver.gs), which saves one JSON file in Drive.
+// A phone can't run anything while the app is closed, so «weekly» means: the first time the app is open after 7 days.
+// Pure rules here; tests/backup.test.mjs evaluates this block.
+const BC=(function(){
+const DAY=864e5, WEEK=7*DAY, RETRY=36e5, STALE=8*DAY;
+const on=ab=>!ab||ab.on!==false;
+function due(S,ab,now,manual){
+  if(!on(ab)||!(S.bookings||[]).length)return false;
+  if(manual)return true;
+  ab=ab||{};
+  if(ab.last&&now-ab.last<WEEK)return false;
+  if(ab.lastTry&&now-ab.lastTry<RETRY)return false;
+  return true;
+}
+function payload(S,meta){return JSON.stringify({kind:'daftar-backup',app:meta.app,token:meta.token,sentAt:meta.sentAt,ver:meta.ver,count:(S.bookings||[]).length,data:S})}
+function parseResponse(text){
+  let o;try{o=JSON.parse(text)}catch(e){return {ok:false,err:/<html|<!doctype/i.test(String(text))?'html-page':'bad-answer'}}
+  if(o&&o.ok===true&&typeof o.name==='string'&&o.name)return {ok:true,name:o.name};
+  return {ok:false,err:String((o&&o.err)||'refused').slice(0,40)};
+}
+function record(ab,now,res){
+  const n=Object.assign({},ab||{on:true});
+  n.lastTry=now;
+  if(res.ok){n.last=now;n.fails=0;n.lastErr='';n.lastName=res.name}
+  else{n.fails=(n.fails||0)+1;n.lastErr=String(res.err||'').slice(0,40)}
+  return n;
+}
+// null = no warning bar; {kind:'manual'} = the old «take a backup» bar; {kind:'auto-failing'} = nothing has reached Sajjad for 8 days
+function warn(S,ab,now,autoBuilt){
+  if((S.bookings||[]).length<3)return null;
+  if(autoBuilt&&on(ab)){
+    const last=Math.max(S.lastBackup||0,(ab&&ab.last)||0);
+    if(last)return now-last>=STALE?{kind:'auto-failing',days:Math.floor((now-last)/DAY)}:null;
+    return ab&&ab.since&&now-ab.since>=STALE?{kind:'auto-failing',days:null}:null;
+  }
+  const days=S.lastBackup?Math.floor((now-S.lastBackup)/DAY):null;
+  return days===null||days>=3?{kind:'manual',days}:null;
+}
+return {due,payload,parseResponse,record,warn,WEEK};
+})();
+/* BACKUP-CORE END */
 const KEY='daftar-mojgan-v1';
 const FA='۰۱۲۳۴۵۶۷۸۹';
 const SOURCES=[['direct','مستقیم'],['insta','اینستاگرام'],['mani','مانیکوریست'],['recep','پذیرش سالن']];
 const refSource=k=>!!k&&k!=='direct'&&k!=='insta'; // these sources ask «کدام همکار؟»
 const PILOT_ON=true; // the SMS pilot's menu entries (off in builds for other users)
 const AMOUNT_PREFILL=true; // false: the amount box stays empty and the default price only shows faintly inside it
+const AUTO_BACKUP_ON=true; // weekly automatic backup to Sajjad's Drive (off in builds for other users)
+const AUTO_BACKUP_URL=''; // the Apps Script web app's /exec URL (tools/backup_receiver.gs); empty = nothing is sent
+const AUTO_BACKUP_TOKEN='1b7Lk3UTGo5BbUox'; // same as TOKEN in tools/backup_receiver.gs; not a secret
+const autoBuilt=AUTO_BACKUP_ON&&!!AUTO_BACKUP_URL;
 const priceOf=ids=>(ids||[]).reduce((a,s)=>a+((svc(s)||{}).price||0),0);
 const STATUS={booked:'رزرو',done:'انجام شد',cancel:'لغو',noshow:'نیامد'};
 const DEF_SETTINGS={services:[
@@ -708,6 +756,8 @@ if(!S.settings.refsV){const n={};S.bookings.forEach(b=>{if(b.ref)n[b.ref]=(n[b.r
 // migration: lock the share % on bookings that already have an amount
 S.bookings.forEach(b=>{if(b.amount&&b.pct==null)b.pct=curPct()});
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+// weekly automatic backup: start its clock the first time this version runs
+if(autoBuilt&&!S.autoBackup){S.autoBackup={on:true,since:Date.now()};try{localStorage.setItem(KEY,JSON.stringify(S))}catch(_){}}
 
 let view=todayIso();
 let mode='day';try{mode=localStorage.getItem(KEY+'-mode')==='week'?'week':'day'}catch(_){}
@@ -780,10 +830,10 @@ function render(){
   renderDayList();
 }
 function renderBackupWarn(){
-  const n=S.bookings.length, days=S.lastBackup?Math.floor((Date.now()-S.lastBackup)/864e5):null;
-  const w=$('backupWarn');
+  const w=$('backupWarn'), bw=BC.warn(S,S.autoBackup,Date.now(),autoBuilt);
   if(!storageOk){w.hidden=false;w.textContent='ذخیره‌سازی در این مرورگر کار نمی‌کند؛ داده‌ها با بستن صفحه پاک می‌شوند.'}
-  else if(n>=3&&(days===null||days>=3)){w.hidden=false;w.textContent=(days===null?'هنوز پشتیبان گرفته نشده.':`آخرین پشتیبان ${fa(days)} روز پیش.`)+' از منوی ☰ «ارسال فایل پشتیبان» را بزن.'}
+  else if(bw&&bw.kind==='auto-failing'){w.hidden=false;w.textContent=(bw.days===null?'هنوز هیچ پشتیبانی به سجاد نرسیده.':`پشتیبان خودکار ${fa(bw.days)} روز است به سجاد نرسیده.`)+' اینترنت را چک کن یا از منوی ☰ «ارسال فایل پشتیبان» را بزن.'}
+  else if(bw){w.hidden=false;w.textContent=(bw.days===null?'هنوز پشتیبان گرفته نشده.':`آخرین پشتیبان ${fa(bw.days)} روز پیش.`)+' از منوی ☰ «ارسال فایل پشتیبان» را بزن.'}
   else w.hidden=true;
 }
 function renderDayList(){
@@ -1063,6 +1113,25 @@ function download(file){
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},1500);
 }
 function markBackup(){S.lastBackup=Date.now();save();render()}
+// weekly automatic backup to Sajjad's Drive; rules in BACKUP-CORE. Silent unless asked from the menu.
+let abBusy=false;
+async function autoBackup(manual){
+  if(!autoBuilt||abBusy)return;
+  if(!BC.due(S,S.autoBackup,Date.now(),manual)){if(manual)toast(S.autoBackup&&S.autoBackup.on===false?'ارسال خودکار خاموش است':'هنوز نوبتی ثبت نشده');return}
+  if(!manual&&navigator.onLine===false)return;
+  abBusy=true;if(manual)toast('در حال ارسال برای سجاد…');
+  let res;
+  try{const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),30000);
+    const r=await fetch(AUTO_BACKUP_URL,{method:'POST',body:BC.payload(S,{app:'mojgan',token:AUTO_BACKUP_TOKEN,sentAt:Date.now(),ver:KEY}),signal:ctl.signal});
+    clearTimeout(t);res=BC.parseResponse(await r.text())}
+  catch(e){res={ok:false,err:e&&e.name==='AbortError'?'timeout':'network'}}
+  S.autoBackup=BC.record(S.autoBackup,Date.now(),res);if(res.ok)S.lastBackup=Date.now();
+  save();abBusy=false;renderBackupWarn();
+  const st=$('mAbStatus');if(st)st.textContent=abStatus();
+  if(manual)toast(res.ok?'پشتیبان به سجاد رسید ✓':'ارسال نشد ('+res.err+')؛ اینترنت را چک کن و دوباره بزن');
+}
+function abStatus(){const a=S.autoBackup||{};if(a.on===false)return 'ارسال خودکار پشتیبان برای سجاد خاموش است.';
+  return 'هر هفته پشتیبان خودکار برای سجاد فرستاده می‌شود (وقتی اپ باز است و اینترنت هست). '+(a.last?'آخرین ارسال: '+faDay(isoOf(new Date(a.last))).short+'.':'هنوز ارسال نشده.')+(a.fails?' تلاش آخر ناموفق بود.':'')}
 async function shareOrDownload(file,label){
   try{
     if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:label});return true}
@@ -1086,7 +1155,9 @@ function openMenu(){
     <div class="sheethead"><h2>پشتیبان و تنظیمات</h2><button class="iconbtn" data-close aria-label="بستن">✕</button></div>
     <div class="small">${fa(n)} نوبت ثبت شده · ${fa(Object.keys(S.customers).length)} مشتری${S.lastBackup?' · آخرین پشتیبان: '+faDay(isoOf(new Date(S.lastBackup))).short:''}</div>
     <div class="sect"><h3>پشتیبان‌گیری</h3>
-      <span class="small">همه‌ی داده‌ها فقط روی همین گوشی است. هر چند روز یک بار فایل پشتیبان را برای خودت یا سجاد بفرست.</span>
+      <span class="small">همه‌ی داده‌ها فقط روی همین گوشی است.${autoBuilt?'':' هر چند روز یک بار فایل پشتیبان را برای خودت یا سجاد بفرست.'}</span>
+      ${autoBuilt?`<span class="small" id="mAbStatus">${esc(abStatus())}</span>
+      <div class="menu-btns"><button class="btn" id="mAbNow">ارسال پشتیبان برای سجاد، همین الان</button><button class="btn" id="mAbToggle">${S.autoBackup&&S.autoBackup.on===false?'روشن کردن ارسال خودکار':'خاموش کردن ارسال خودکار'}</button></div>`:''}
       <div class="menu-btns">
         <button class="btn primary" id="mShare">ارسال فایل پشتیبان</button>
         <button class="btn" id="mDlJson">دانلود فایل پشتیبان</button>
@@ -1127,6 +1198,8 @@ function openMenu(){
     </div>
   `,()=>{
     $('mShare').addEventListener('click',async()=>{if(await shareOrDownload(backupFile(),'پشتیبان دفتر'))markBackup()});
+    $('mAbNow')&&$('mAbNow').addEventListener('click',()=>autoBackup(true));
+    $('mAbToggle')&&$('mAbToggle').addEventListener('click',()=>{const a=Object.assign({},S.autoBackup||{});a.on=a.on===false;if(a.on&&!a.since)a.since=Date.now();S.autoBackup=a;save();openMenu();renderBackupWarn();toast(a.on?'ارسال خودکار روشن شد':'ارسال خودکار خاموش شد')});
     $('mDlJson').addEventListener('click',()=>{download(backupFile());markBackup();toast('فایل پشتیبان در پوشه‌ی Download ذخیره شد')});
     $('mDlCsv').addEventListener('click',()=>{download(csvFile());toast('فایل CSV در پوشه‌ی Download ذخیره شد')});
     $('mCopyJson').addEventListener('click',()=>{copyText($('mJson').value,$('mJson'),'پشتیبان');markBackup()});
@@ -1511,7 +1584,7 @@ let sx=null,sy=null;document.addEventListener('touchstart',e=>{if(!$('sheetRoot'
 document.addEventListener('touchend',e=>{if(sx===null)return;const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;sx=null;if(Math.abs(dx)>90&&Math.abs(dy)<50){view=addDays(view,(dx>0?1:-1)*step());render()}},{passive:true});
 // F. a new day starts while the app stays open
 let renderedToday=todayIso();
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')return;const t=todayIso();if(t!==renderedToday){if(view===renderedToday)view=t;renderedToday=t}render()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')return;autoBackup(false);const t=todayIso();if(t!==renderedToday){if(view===renderedToday)view=t;renderedToday=t}render()});
 // K. install button + L. offline worker
 let installEvt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;$('installBar').hidden=false});
@@ -1527,6 +1600,7 @@ if('serviceWorker' in navigator&&location.protocol!=='file:'){
 }
 window.__daftar={normCustomer,shamsi,faDay,csv,state:()=>S,dur,PC};
 render();
+setTimeout(()=>autoBackup(false),4000);addEventListener('online',()=>autoBackup(false));
 askPending();
 })();
 </script>
