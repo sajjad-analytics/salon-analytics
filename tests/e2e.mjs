@@ -480,6 +480,65 @@ console.log(`B ok: ${msgN} messages sent with ${taps} taps in ${((Date.now() - t
   console.log('D ok: preview isolated (storage, worker, cache)');
 }
 
+// I. weekly automatic backup (Mojgan's app with a receiver URL): sends once, then waits a week; menu send-now, failure, off switch
+{
+  const URL_ = 'https://backup.example/exec';
+  const src = readFileSync(join(DOCS, 'index.html'), 'utf8');
+  assert.ok(src.includes("const AUTO_BACKUP_URL='"), 'AUTO_BACKUP_URL constant present');
+  const withUrl = src.replace(/const AUTO_BACKUP_URL='[^']*';/, `const AUTO_BACKUP_URL='${URL_}';`);
+  const backup = readFileSync(join(ROOT, 'tests/fixtures/backup-v1.json'), 'utf8');
+  const ctx = await browser.newContext({viewport: {width: 375, height: 812}, deviceScaleFactor: 2, serviceWorkers: 'block', locale: 'fa-IR'});
+  const pg = await ctx.newPage();
+  pg.on('pageerror', e => problems.push('auto-backup page error: ' + e.message));
+  pg.on('request', r => { const u = r.url(); if (!u.startsWith(ORIGIN) && u !== URL_ && !/^(data|blob):/.test(u)) problems.push('external request: ' + u) });
+  await pg.route(ORIGIN + '/', r => r.fulfill({status: 200, contentType: 'text/html; charset=utf-8', body: withUrl}));
+  const sent = []; let answer = {status: 200, body: '{"ok":true,"name":"daftar-mojgan-2026-11-05_0930.json"}'};
+  await pg.route(URL_, r => { sent.push(r.request().postData()); r.fulfill({status: answer.status, contentType: 'application/json', headers: {'Access-Control-Allow-Origin': '*'}, body: answer.body}) });
+  await pg.addInitScript(([k, v]) => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem(k, v); sessionStorage.setItem('seeded', '1') } }, [KEY, backup]);
+  await pg.goto(ORIGIN + '/');
+  for (let i = 0; i < 40 && !sent.length; i++) await pg.waitForTimeout(250);
+  assert.equal(sent.length, 1, 'one automatic send a few seconds after opening');
+  const p = JSON.parse(sent[0]);
+  assert.equal(p.kind, 'daftar-backup'); assert.equal(p.app, 'mojgan');
+  assert.equal(p.count, JSON.parse(backup).bookings.length); assert.equal(p.data.bookings.length, p.count, 'whole state sent');
+  let s = await state(pg);
+  assert.ok(s.autoBackup.last && s.lastBackup, 'success recorded and counts as a backup');
+  assert.equal(await pg.isVisible('#backupWarn'), false, 'no warning bar after a good send');
+  // reopening the same week sends nothing
+  await pg.reload(); await pg.waitForTimeout(5000);
+  assert.equal(sent.length, 1, 'no second send within the week');
+  // menu: status + send now
+  await pg.click('#menuBtn');
+  assert.ok((await pg.textContent('#mAbStatus')).includes('آخرین ارسال'), 'menu shows the last send');
+  await noHScroll(pg, 'menu with auto-backup');
+  await pg.evaluate(() => document.getElementById('mAbStatus').scrollIntoView({block: 'start'}));
+  await shot(pg, '11-menu-auto-backup');
+  await pg.click('#mAbNow'); for (let i = 0; i < 20 && sent.length < 2; i++) await pg.waitForTimeout(150);
+  assert.equal(sent.length, 2, 'send-now sends');
+  await pg.waitForTimeout(500); // let the answer be recorded
+  // failure: Google answers with a login page → not counted, failure shown, last good send kept
+  answer = {status: 200, body: '<!DOCTYPE html><html>Sign in</html>'};
+  const lastGood = (await state(pg)).autoBackup.last;
+  await pg.click('#mAbNow'); for (let i = 0; i < 20 && sent.length < 3; i++) await pg.waitForTimeout(150);
+  await pg.waitForTimeout(300);
+  s = await state(pg);
+  assert.equal(s.autoBackup.fails, 1); assert.equal(s.autoBackup.last, lastGood);
+  assert.ok((await pg.textContent('#toast')).includes('ارسال نشد'), 'failure toast');
+  assert.ok((await pg.textContent('#mAbStatus')).includes('ناموفق'), 'menu shows the failed try');
+  // off switch: nothing is sent, even with send-now
+  await pg.click('#mAbToggle');
+  assert.equal((await state(pg)).autoBackup.on, false);
+  await pg.click('#mAbNow'); await pg.waitForTimeout(500); // the menu stays open after the switch
+  assert.equal(sent.length, 3, 'switched off: nothing sent');
+  await pg.click('#mAbToggle'); // back on
+  // nothing reached Sajjad for 9 days (and the next try fails) → the warning bar asks for a manual backup
+  await pg.evaluate(([k]) => { const s = window.__daftar.state(); const t = Date.now() - 9 * 864e5; s.autoBackup.last = t; s.lastBackup = t; s.autoBackup.lastTry = Date.now(); localStorage.setItem(k, JSON.stringify(s)) }, [KEY]);
+  await pg.reload(); await pg.waitForTimeout(300);
+  assert.ok((await pg.textContent('#backupWarn')).includes('به سجاد نرسیده'), 'warning after 8+ days without a good send');
+  await ctx.close();
+  console.log('I ok: weekly auto-backup sends once a week, send-now, failure kept visible, off switch, stale warning');
+}
+
 await browser.close();
 server.close();
 if (problems.length) { console.error('PROBLEMS:\n' + problems.join('\n')); process.exit(1) }
